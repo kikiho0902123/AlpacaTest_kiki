@@ -6,12 +6,14 @@
 //
 
 import SwiftUI
+import SwiftData
 
 @main
-struct AlpacaTest_kikiApp: App {
+struct AlpacaTaskApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
         }
+        .modelContainer(for: TaskItem.self)
     }
 }
