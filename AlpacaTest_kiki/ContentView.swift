@@ -6,19 +6,36 @@
 //
 
 import SwiftUI
+import SwiftData
 
 struct ContentView: View {
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        TabView {
+            TodayTasksView()
+                .tabItem {
+                    Label("今日任務", systemImage: "sun.max.fill")
+                }
+
+            TaskLibraryView()
+                .tabItem {
+                    Label("任務庫", systemImage: "books.vertical.fill")
+                }
+
+            FeedbackView()
+                .tabItem {
+                    Label("回饋", systemImage: "chart.bar.fill")
+                }
+
+            SettingsView()
+                .tabItem {
+                    Label("個人化設定", systemImage: "person.crop.circle.fill")
+                }
         }
-        .padding()
+        .tint(.alpacaTerracotta)
     }
 }
 
 #Preview {
     ContentView()
+        .modelContainer(for: TaskItem.self, inMemory: true)
 }

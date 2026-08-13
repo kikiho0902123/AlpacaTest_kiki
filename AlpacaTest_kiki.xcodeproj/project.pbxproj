@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		272B9A17302CD1FE00799C2A /* AlpacaTest_kiki.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AlpacaTest_kiki.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		272B9A17302CD1FE00799C2A /* AlpacaTest_kiki.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = AlpacaTest_kiki.app; path = "/Users/kiki/Desktop/AlpacaTest_kiki/build/Debug-iphoneos/AlpacaTest_kiki.app"; sourceTree = "<absolute>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -33,16 +33,7 @@
 			isa = PBXGroup;
 			children = (
 				272B9A19302CD1FE00799C2A /* AlpacaTest_kiki */,
-				272B9A18302CD1FE00799C2A /* Products */,
 			);
-			sourceTree = "<group>";
-		};
-		272B9A18302CD1FE00799C2A /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				272B9A17302CD1FE00799C2A /* AlpacaTest_kiki.app */,
-			);
-			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -95,7 +86,7 @@
 			mainGroup = 272B9A0E302CD1FE00799C2A;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
-			productRefGroup = 272B9A18302CD1FE00799C2A /* Products */;
+			productRefGroup = 272B9A0E302CD1FE00799C2A;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
