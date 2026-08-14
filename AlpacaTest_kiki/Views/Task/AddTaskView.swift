@@ -2,7 +2,10 @@
 //  AddTaskView.swift
 //  AlpacaTest_kiki
 //
-//  Created by kikiho on 2026/8/13.
+//  Minimal task creator. Owned by A.
+//  Phase 1: migrated onto TodoTask (name + must-today + complexity).
+//  TODO(Phase 2): rename to TaskEditorView (shared create/edit, COM-04), 3-state date (TSK-02),
+//  inline category/subcategory creation, context note.
 //
 
 import SwiftUI
@@ -13,8 +16,10 @@ struct AddTaskView: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var name: String = ""
-    @State private var isMustDoToday: Bool = false
-    @State private var difficulty: TaskDifficulty = .easy
+    @State private var isMustToday: Bool = false
+    @State private var complexity: Int = 0        // 0 easy / 1 medium / 2 hard
+
+    private let complexityLabels = ["簡單", "中等", "困難"]
 
     var body: some View {
         NavigationStack {
@@ -24,11 +29,11 @@ struct AddTaskView: View {
                 }
 
                 Section("設定") {
-                    Toggle("今天一定要完成 ⚡️", isOn: $isMustDoToday)
+                    Toggle("今天一定要完成 ⚡️", isOn: $isMustToday)
 
-                    Picker("複雜程度", selection: $difficulty) {
-                        ForEach(TaskDifficulty.allCases) { level in
-                            Text(level.label).tag(level)
+                    Picker("複雜程度", selection: $complexity) {
+                        ForEach(complexityLabels.indices, id: \.self) { index in
+                            Text(complexityLabels[index]).tag(index)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -41,7 +46,9 @@ struct AddTaskView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("新增") {
-                        let newTask = TaskItem(name: name, isMustDoToday: isMustDoToday, difficulty: difficulty)
+                        let newTask = TodoTask(name: name)
+                        newTask.isMustToday = isMustToday
+                        newTask.complexity = complexity
                         modelContext.insert(newTask)
                         dismiss()
                     }
@@ -54,5 +61,5 @@ struct AddTaskView: View {
 
 #Preview {
     AddTaskView()
-        .modelContainer(for: TaskItem.self, inMemory: true)
+        .modelContainer(for: TodoTask.self, inMemory: true)
 }

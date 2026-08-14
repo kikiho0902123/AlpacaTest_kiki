@@ -2,23 +2,26 @@
 //  TodayTasksView.swift
 //  AlpacaTest_kiki
 //
-//  Created by kikiho on 2026/8/13.
+//  Today main screen (TOD-01). Owned by A.
+//  Phase 1: minimal migration onto TodoTask.
+//  TODO(Phase 2): rename to TodayView, extract AlpacaStatusView (image only, no numbers — STATE-09),
+//  three groups (To-do / Split / Done), "End the day" island (EOD-01).
 //
 
 import SwiftUI
 import SwiftData
 
 struct TodayTasksView: View {
-    @Query(sort: \TaskItem.createdAt) private var allTasks: [TaskItem]
+    @Query(sort: \TodoTask.createdAt) private var allTasks: [TodoTask]
     @Environment(\.modelContext) private var modelContext
     @State private var showAddSheet = false
 
     // 未完成在前，已完成在後
-    private var sortedTasks: [TaskItem] {
+    private var sortedTasks: [TodoTask] {
         allTasks.sorted { lhs, rhs in
-            if lhs.isCompleted != rhs.isCompleted {
-                return !lhs.isCompleted
-            }
+            let lDone = lhs.status == "done"
+            let rDone = rhs.status == "done"
+            if lDone != rDone { return !lDone }
             return lhs.createdAt < rhs.createdAt
         }
     }
@@ -30,7 +33,7 @@ struct TodayTasksView: View {
 
                 ScrollView {
                     VStack(spacing: 16) {
-                        // TODO: 換成你自己的羊駝吉祥物圖片（Assets 裡加一張圖，改用 Image("你的圖片名稱")）
+                        // AlpacaStatusView placeholder — image only, NO numbers, NO caption (STATE-09).
                         Image(systemName: "pawprint.circle.fill")
                             .resizable()
                             .scaledToFit()
@@ -81,5 +84,5 @@ struct TodayTasksView: View {
 
 #Preview {
     TodayTasksView()
-        .modelContainer(for: TaskItem.self, inMemory: true)
+        .modelContainer(for: TodoTask.self, inMemory: true)
 }

@@ -1,6 +1,9 @@
 # macOS
 .DS_Store
 
+# Secrets (real keys live here; never commit — TEAM_PLAN §1.5)
+Secrets.swift
+
 # Xcode - build & derived data
 build/
 DerivedData/

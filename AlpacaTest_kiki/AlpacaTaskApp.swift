@@ -14,6 +14,6 @@ struct AlpacaTaskApp: App {
         WindowGroup {
             ContentView()
         }
-        .modelContainer(for: TaskItem.self)
+        .modelContainer(for: [TodoTask.self, TaskLog.self, ChatMessage.self, DailyStat.self, UserProfile.self])
     }
 }

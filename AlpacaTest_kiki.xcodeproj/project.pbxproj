@@ -6,8 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		307B4C04302F72DB0077CAAE /* TEAM_PLAN_EN-2.md in Resources */ = {isa = PBXBuildFile; fileRef = 307B4C03302F72DB0077CAAE /* TEAM_PLAN_EN-2.md */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
-		272B9A17302CD1FE00799C2A /* AlpacaTest_kiki.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = AlpacaTest_kiki.app; path = "/Users/kiki/Desktop/AlpacaTest_kiki/build/Debug-iphoneos/AlpacaTest_kiki.app"; sourceTree = "<absolute>"; };
+		307B4BEE302F728B0077CAAE /* AlpacaTest_kiki.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AlpacaTest_kiki.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		307B4C03302F72DB0077CAAE /* TEAM_PLAN_EN-2.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "TEAM_PLAN_EN-2.md"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -33,6 +38,8 @@
 			isa = PBXGroup;
 			children = (
 				272B9A19302CD1FE00799C2A /* AlpacaTest_kiki */,
+				307B4BEE302F728B0077CAAE /* AlpacaTest_kiki.app */,
+				307B4C03302F72DB0077CAAE /* TEAM_PLAN_EN-2.md */,
 			);
 			sourceTree = "<group>";
 		};
@@ -58,7 +65,7 @@
 			packageProductDependencies = (
 			);
 			productName = AlpacaTest_kiki;
-			productReference = 272B9A17302CD1FE00799C2A /* AlpacaTest_kiki.app */;
+			productReference = 307B4BEE302F728B0077CAAE /* AlpacaTest_kiki.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -100,6 +107,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				307B4C04302F72DB0077CAAE /* TEAM_PLAN_EN-2.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
