@@ -3,9 +3,10 @@
 //  AlpacaTest_kiki
 //
 //  Action task card (TOD-03). Owned by A.
-//  Step 1: working minimum — blocks B (History variant) and C (SplitFlowModal subtask cards).
-//  Deferred: must-today tag, subcategory line, split-parent variant, visual polish.
-//  Empty buttons (拆分 / 卡住了 / …) print() only — wired in Step 4.
+//  Step 4: 按鈕全部接上 — TOD-04 開始詢問、SPL-01~04 拆分、STK-01/02 卡關、
+//  TOD-07 任務記錄、TSK-06 刪除確認。所有確認框都走共用的 ConfirmModal 樣板（COM-06）。
+//  唯一還是 print() 的是「編輯」：要等 Step 3 的 TaskEditorView 支援編輯模式。
+//  Deferred: must-today tag, subcategory line, visual polish.
 //
 
 import SwiftUI
@@ -14,6 +15,41 @@ import SwiftData
 struct TaskCardView: View {
     @Bindable var task: TodoTask
     @Environment(\.modelContext) private var modelContext
+
+    // MARK: - Step 4 routing state
+
+    /// 全螢幕蓋版：三個 ConfirmModal 系列（透明底）＋ 卡關聊天室
+    private enum CardCover: Identifiable {
+        case startAsk        // TOD-04
+        case stuckConfirm    // STK-01
+        case deleteConfirm   // TSK-06
+        case stuckChat       // STK-02
+
+        var id: Int {
+            switch self {
+            case .startAsk:      return 0
+            case .stuckConfirm:  return 1
+            case .deleteConfirm: return 2
+            case .stuckChat:     return 3
+            }
+        }
+    }
+
+    /// Sheet：拆分流程（要帶 source）與任務記錄
+    private enum CardSheet: Identifiable {
+        case split(SplitSource)  // SPL-01~04
+        case record              // TOD-07
+
+        var id: String {
+            switch self {
+            case .split(let source): return "split-\(source)"
+            case .record:            return "record"
+            }
+        }
+    }
+
+    @State private var cover: CardCover?
+    @State private var sheet: CardSheet?
 
     private var isStarted: Bool { task.status != "notStarted" }
     private var isDone: Bool    { task.status == "done" }
@@ -125,6 +161,72 @@ struct TaskCardView: View {
             guard !isDone, !isSplitParent else { return }
             if oldValue < 1.0 && newValue >= 1.0 { postCompleted() }
         }
+        // MARK: - Step 4 routing
+        // 一個 cover + 一個 sheet，用 enum 分流。堆疊多個 .sheet/.fullScreenCover
+        // 在同一層是 SwiftUI 的已知雷（只有部分會真的彈出），所以收斂成兩個。
+        .fullScreenCover(item: $cover) { destination in
+            coverContent(for: destination)
+        }
+        .sheet(item: $sheet) { destination in
+            sheetContent(for: destination)
+        }
+    }
+
+    // MARK: - Routing destinations
+
+    @ViewBuilder
+    private func coverContent(for destination: CardCover) -> some View {
+        switch destination {
+        case .startAsk:
+            // TOD-04：否 → 照 Step 1 直接開始；是 → C 的 SplitFlowModal(.startAsk)
+            StartAskSplitModal(
+                onSplit: {
+                    cover = nil
+                    sheet = .split(.startAsk)
+                },
+                onStartDirectly: {
+                    cover = nil
+                    start()
+                }
+            )
+            .presentationBackground(.clear)
+
+        case .stuckConfirm:
+            // STK-01：C 已經把換字版 ConfirmModal 包好了
+            StuckConfirmModal(
+                onGo: { cover = .stuckChat },
+                onCancel: { cover = nil }
+            )
+            .presentationBackground(.clear)
+
+        case .deleteConfirm:
+            // TSK-06：共用樣板，destructive 版
+            DimmedModal {
+                ConfirmModal(
+                    title: "確定刪除這個任務嗎？",
+                    message: "刪除後就找不回來了，相關的任務記錄也會一起消失。",
+                    primary: ModalAction(title: "刪除", isDestructive: true) {
+                        cover = nil
+                        deleteTask()
+                    },
+                    secondary: ModalAction(title: "取消") { cover = nil }
+                )
+            }
+            .presentationBackground(.clear)
+
+        case .stuckChat:
+            StuckChatView(task: task)
+        }
+    }
+
+    @ViewBuilder
+    private func sheetContent(for destination: CardSheet) -> some View {
+        switch destination {
+        case .split(let source):
+            SplitFlowModal(task: task, source: source)
+        case .record:
+            TaskRecordSheet(task: task)
+        }
     }
 
     /// 已完成與已拆分都是灰階唯讀狀態
@@ -139,7 +241,7 @@ struct TaskCardView: View {
     private var actionMenu: some View {
         Menu {
             Button {
-                print("卡住了 tapped — TODO Step 4 (StuckConfirmModal)")
+                cover = .stuckConfirm
             } label: {
                 Label("卡住了", systemImage: "hand.raised.fill")
             }
@@ -147,7 +249,7 @@ struct TaskCardView: View {
 
             if !isStarted {
                 Button {
-                    print("拆分 tapped — TODO Step 4 (SplitFlowModal source: .manual)")
+                    sheet = .split(.manual)
                 } label: {
                     Label("拆分", systemImage: "square.split.2x2")
                 }
@@ -155,20 +257,22 @@ struct TaskCardView: View {
 
             Divider()
 
+            // TODO(Step 3): AddTaskView 目前只支援新增，沒有編輯模式；
+            // 等 TaskEditorView（TSK-01/05 共用 create/edit）做出來再接。
             Button {
-                print("編輯 tapped — TODO Step 4 (TaskEditorView)")
+                print("編輯 tapped — 待 Step 3 的 TaskEditorView 支援編輯模式")
             } label: {
                 Label("編輯", systemImage: "pencil")
             }
 
             Button {
-                print("查看任務記錄 tapped — TODO Step 4 (C's TaskRecordSheet, TOD-07)")
+                sheet = .record
             } label: {
                 Label("查看任務記錄", systemImage: "list.bullet.rectangle")
             }
 
             Button(role: .destructive) {
-                print("刪除 tapped — TODO Step 4 (ConfirmModal, TSK-06)")
+                cover = .deleteConfirm
             } label: {
                 Label("刪除", systemImage: "trash")
             }
@@ -184,7 +288,7 @@ struct TaskCardView: View {
     private var splitParentMenu: some View {
         Menu {
             Button {
-                print("查看任務記錄 tapped — TODO Step 4 (C's TaskRecordSheet, TOD-07)")
+                sheet = .record
             } label: {
                 Label("查看任務記錄", systemImage: "list.bullet.rectangle")
             }
@@ -198,11 +302,21 @@ struct TaskCardView: View {
 
     // MARK: - Actions
 
+    /// 開始前先問 TOD-04；開始後主要按鈕直接進手動拆分（SPL-01 .manual）
     private func primaryAction() {
         if isStarted {
-            print("拆分 tapped — TODO Step 4 (SplitFlowModal source: .manual)")
+            sheet = .split(.manual)
         } else {
-            start()
+            cover = .startAsk
+        }
+    }
+
+    /// TSK-06：先關掉 modal 再刪，避免 sheet 還持有已刪除的 model object。
+    private func deleteTask() {
+        let target = task
+        DispatchQueue.main.async {
+            modelContext.delete(target)
+            try? modelContext.save()
         }
     }
 
