@@ -21,7 +21,9 @@ struct TodayView: View {
     @AppStorage("home.notificationsEnabled") private var notificationsEnabled = true
     @AppStorage("home.eodReminderMinutes") private var eodReminderMinutes = 21 * 60
 
-    @State private var showAddSheet = false
+    @State private var showAddSheet = false          // 手動建立
+    @State private var showCreateChoice = false      // 「＋」先問手動 or AI
+    @State private var showAICreate = false          // AI 幫你建立
     @State private var completingTaskID: UUID?
     @State private var eodRequest: EODRequest?
 
@@ -135,7 +137,7 @@ struct TodayView: View {
                 }
 
                 Button {
-                    showAddSheet = true
+                    showCreateChoice = true
                 } label: {
                     Image(systemName: "plus")
                         .font(.title2.bold())
@@ -150,8 +152,25 @@ struct TodayView: View {
             .navigationTitle("今日任務")
             .navigationBarTitleDisplayMode(.inline)
         }
+        // 「＋」→ 先選建立方式（共用 ConfirmModal 樣板，透明底蓋滿整頁）
+        .fullScreenCover(isPresented: $showCreateChoice) {
+            CreateTaskChoiceModal(
+                onAI: {
+                    showCreateChoice = false
+                    showAICreate = true
+                },
+                onManual: {
+                    showCreateChoice = false
+                    showAddSheet = true
+                }
+            )
+            .presentationBackground(.clear)
+        }
         .sheet(isPresented: $showAddSheet) {
             TaskEditorView(task: nil)
+        }
+        .sheet(isPresented: $showAICreate) {
+            AITaskCreationView()
         }
         .sheet(isPresented: completionSheetBinding) {
             if let completingTask {
