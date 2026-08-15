@@ -7,11 +7,13 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct MyHomeView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var profiles: [UserProfile]
 
+    @AppStorage("home.selectedAvatarIndex") private var selectedAvatarIndex = 0
     @State private var modalState: CraftModalState?
     @State private var showAccountSettings = false
     @State private var showNotificationSettings = false
@@ -62,14 +64,20 @@ struct MyHomeView: View {
             }
         }
         .animation(.easeInOut(duration: 0.18), value: modalState?.id)
-        .fullScreenCover(isPresented: $showAccountSettings) {
+        .sheet(isPresented: $showAccountSettings) {
             AccountSettingsView(profile: profile)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showNotificationSettings) {
             NotificationSettingsView()
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
         }
+    }
+
+    private func avatarAssetName(for index: Int) -> String {
+        "user_icon_\(min(max(index, 0), 3))"
     }
 
     private var homeHeader: some View {
@@ -87,11 +95,8 @@ struct MyHomeView: View {
                 Button {
                     showAccountSettings = true
                 } label: {
-                    Image(systemName: "person.crop.circle.fill")
-                        .font(.system(size: 31))
-                        .foregroundStyle(Theme.surfaceLavender)
-                        .frame(width: 44, height: 44)
-                        .background(.white.opacity(0.62), in: Circle())
+                    // 右上角頭貼讀取使用者已選的 icon，與帳號設定頁同步。
+                    SoftAvatarImage(assetName: avatarAssetName(for: selectedAvatarIndex), size: 44)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("帳號設定")
@@ -114,7 +119,8 @@ struct MyHomeView: View {
     private var woolBank: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .center, spacing: 16) {
-                SoftIconBadge(symbolName: "shippingbox.fill", tint: Theme.primary, size: 72, iconSize: 32)
+                // 羊毛庫主圖：先使用 asset 的 wood 圖；若圖名調整，fallback 仍會顯示箱子 icon。
+                SoftAssetBadge(assetName: "wood", fallbackSymbolName: "shippingbox.fill", tint: Theme.primary, size: 72, imageSize: 58)
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("羊毛庫")
@@ -193,7 +199,8 @@ struct MyHomeView: View {
 
     private func textileCountCard(item: CraftItem, count: Int) -> some View {
         VStack(spacing: 10) {
-            SoftIconBadge(symbolName: item.symbolName, tint: item.tint, size: 46, iconSize: 22)
+            // 織品庫使用實際製作物圖片，不再使用 SF Symbol。
+            SoftAssetBadge(assetName: item.assetName, fallbackSymbolName: item.fallbackSymbolName, tint: item.tint, size: 50, imageSize: 42)
 
             Text(item.title)
                 .font(.system(.caption, design: .rounded).weight(.semibold))
@@ -221,7 +228,8 @@ struct MyHomeView: View {
         let hasEnoughWool = profile.woolBankG >= item.costG
 
         return HStack(spacing: 14) {
-            SoftIconBadge(symbolName: item.symbolName, tint: item.tint, size: 58, iconSize: 25, cornerRadius: 18)
+            // 製作區也使用同一組織品圖片，方便之後直接替換 asset。
+            SoftAssetBadge(assetName: item.assetName, fallbackSymbolName: item.fallbackSymbolName, tint: item.tint, size: 58, imageSize: 48, cornerRadius: 18)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(item.title)
@@ -308,13 +316,7 @@ private struct SoftIconBadge: View {
 
     var body: some View {
         ZStack {
-            if let cornerRadius {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(tint.opacity(0.28))
-            } else {
-                Circle()
-                    .fill(tint.opacity(0.28))
-            }
+            badgeBackground
 
             Image(systemName: symbolName)
                 .font(.system(size: iconSize, weight: .semibold))
@@ -323,6 +325,104 @@ private struct SoftIconBadge: View {
         }
         .frame(width: size, height: size)
     }
+
+    @ViewBuilder
+    private var badgeBackground: some View {
+        if let cornerRadius {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(tint.opacity(0.28))
+        } else {
+            Circle()
+                .fill(tint.opacity(0.28))
+        }
+    }
+}
+
+private struct SoftAvatarImage: View {
+    let assetName: String
+    var size: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(.white.opacity(0.72))
+
+            if UIImage(named: assetName) != nil {
+                Image(assetName)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size - 6, height: size - 6)
+                    .clipShape(Circle())
+            } else {
+                Image(systemName: "person.crop.circle.fill")
+                    .font(.system(size: size * 0.68))
+                    .foregroundStyle(Theme.surfaceLavender)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(
+            Circle()
+                .stroke(.white.opacity(0.82), lineWidth: 1)
+        )
+    }
+}
+
+private struct SoftAvatarOption: View {
+    let assetName: String
+    let isSelected: Bool
+
+    var body: some View {
+        SoftAvatarImage(assetName: assetName, size: 58)
+            .padding(3)
+            .background(
+                Circle()
+                    .fill(isSelected ? Theme.highlight.opacity(0.28) : .white.opacity(0.36))
+            )
+            .overlay(
+                Circle()
+                    .stroke(isSelected ? Theme.primary : .white.opacity(0.72), lineWidth: isSelected ? 2 : 1)
+            )
+    }
+}
+
+private struct SoftAssetBadge: View {
+    let assetName: String
+    let fallbackSymbolName: String
+    let tint: Color
+    var size: CGFloat
+    var imageSize: CGFloat
+    var cornerRadius: CGFloat? = nil
+
+    var body: some View {
+        ZStack {
+            badgeBackground
+
+            // 先讀 asset 圖片；若 image set 名稱不同，保留 fallback icon 方便畫面不壞。
+            if UIImage(named: assetName) != nil {
+                Image(assetName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: imageSize, height: imageSize)
+            } else {
+                Image(systemName: fallbackSymbolName)
+                    .font(.system(size: imageSize * 0.48, weight: .semibold))
+                    .foregroundStyle(tint)
+            }
+        }
+        .frame(width: size, height: size)
+    }
+
+    @ViewBuilder
+    private var badgeBackground: some View {
+        if let cornerRadius {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(tint.opacity(0.22))
+        } else {
+            Circle()
+                .fill(tint.opacity(0.22))
+        }
+    }
 }
 
 struct AccountSettingsView: View {
@@ -330,73 +430,65 @@ struct AccountSettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @State private var draftName: String = ""
-    @State private var isEditing = false
-    @State private var avatarRefreshCount = 0
+    @AppStorage("home.selectedAvatarIndex") private var selectedAvatarIndex = 0
+
+    private func avatarAssetName(for index: Int) -> String {
+        "user_icon_\(min(max(index, 0), 3))"
+    }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 24) {
+            VStack(spacing: 18) {
                 VStack(spacing: 12) {
-                    SoftIconBadge(symbolName: "person.crop.circle.fill", tint: Theme.surfaceLavender, size: 132, iconSize: 82)
+                    // 目前選到的頭貼會持久記錄，My Home 右上角也會同步更新。
+                    SoftAvatarImage(assetName: avatarAssetName(for: selectedAvatarIndex), size: 104)
 
-                    Button {
-                        avatarRefreshCount += 1
-                    } label: {
-                        Label("更換頭貼", systemImage: "photo.fill")
+                    VStack(spacing: 10) {
+                        Text("選擇頭貼")
                             .font(.system(.caption, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Theme.primaryText)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(Theme.surfaceMint.opacity(0.55), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
+                            .foregroundStyle(Theme.secondaryText)
 
-                    if avatarRefreshCount > 0 {
-                        Text("頭貼選取器尚未接入，目前先保留入口。")
-                            .font(.system(.caption2, design: .rounded))
-                            .foregroundStyle(Theme.tertiaryText)
+                        HStack(spacing: 12) {
+                            ForEach(0..<4, id: \.self) { index in
+                                Button {
+                                    selectedAvatarIndex = index
+                                } label: {
+                                    SoftAvatarOption(
+                                        assetName: avatarAssetName(for: index),
+                                        isSelected: selectedAvatarIndex == index
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("選擇頭貼 \(index + 1)")
+                            }
+                        }
                     }
                 }
-                .padding(.top, 26)
+                .padding(.top, 8)
 
                 VStack(alignment: .leading, spacing: 12) {
                     Text("使用者名稱")
                         .font(Theme.sectionTitleFont)
                         .foregroundStyle(Theme.primaryText)
 
-                    if isEditing {
-                        TextField("使用者名稱", text: $draftName)
-                            .font(.system(.body, design: .rounded))
-                            .padding(14)
-                            .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    } else {
-                        Text(profile.name)
-                            .font(.system(.title3, design: .rounded).weight(.semibold))
-                            .foregroundStyle(Theme.primaryText)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(14)
-                            .background(.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    }
-
-                    Text("帳號資訊")
-                        .font(Theme.sectionTitleFont)
+                    // 使用者名稱可直接點擊修改，不需要額外切換編輯模式。
+                    TextField("使用者名稱", text: $profile.name)
+                        .font(.system(.title3, design: .rounded).weight(.semibold))
                         .foregroundStyle(Theme.primaryText)
-                        .padding(.top, 10)
-
-                    Text("Demo account · Onboarding 建立")
-                        .font(.system(.body, design: .rounded))
-                        .foregroundStyle(Theme.secondaryText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textInputAutocapitalization(.words)
+                        .submitLabel(.done)
                         .padding(14)
-                        .background(.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .onSubmit { saveProfileName() }
+                        .onChange(of: profile.name) { _, _ in
+                            try? modelContext.save()
+                        }
                 }
                 .padding(20)
                 .softFeedbackCard(surface: .white.opacity(0.58))
 
-                Spacer()
             }
-            .padding(.horizontal, 22)
+            .padding(22)
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("帳號設定")
             .navigationBarTitleDisplayMode(.inline)
@@ -405,24 +497,14 @@ struct AccountSettingsView: View {
                     Button("返回") { dismiss() }
                         .foregroundStyle(Theme.primaryText)
                 }
-
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(isEditing ? "儲存" : "編輯") {
-                        if isEditing {
-                            profile.name = draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? profile.name : draftName
-                            try? modelContext.save()
-                        } else {
-                            draftName = profile.name
-                        }
-                        isEditing.toggle()
-                    }
-                    .foregroundStyle(Theme.primaryText)
-                }
             }
         }
-        .onAppear {
-            draftName = profile.name
-        }
+    }
+
+    private func saveProfileName() {
+        let trimmedName = profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        profile.name = trimmedName.isEmpty ? "Demo User" : trimmedName
+        try? modelContext.save()
     }
 }
 
@@ -513,7 +595,15 @@ enum CraftItem: String, CaseIterable, Identifiable {
         costG.formatted() + " g"
     }
 
-    var symbolName: String {
+    var assetName: String {
+        switch self {
+        case .gloves: return "gloves"
+        case .scarf: return "scaf"
+        case .cape: return "jacket"
+        }
+    }
+
+    var fallbackSymbolName: String {
         switch self {
         case .gloves: return "hand.raised.fill"
         case .scarf: return "wind"

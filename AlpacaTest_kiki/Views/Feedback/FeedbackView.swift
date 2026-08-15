@@ -18,6 +18,7 @@ struct FeedbackView: View {
 
     @State private var liveAlpacaOffset: CGFloat = -4
     @State private var liveTodayWool: Int?
+    @State private var liveAlpacaTier = 0
 
     private var calendar: Calendar { Calendar.current }
 
@@ -46,6 +47,10 @@ struct FeedbackView: View {
 
     private var displayedTodayWool: Int {
         liveTodayWool ?? todayWool
+    }
+
+    private var displayedLiveAlpacaTier: Int {
+        AlpacaFeedbackSnapshot.tier(forGrowthCount: liveAlpacaTier)
     }
 
     // 歷史週次：固定顯示最近 12 週，不包含本週；越新的週越上方。
@@ -102,6 +107,11 @@ struct FeedbackView: View {
             if let totalToday = notification.userInfo?["totalToday"] as? Int {
                 withAnimation(.easeInOut(duration: 0.25)) {
                     liveTodayWool = totalToday
+                    if let growthTier = notification.userInfo?["growthTier"] as? Int {
+                        liveAlpacaTier = growthTier
+                    } else {
+                        liveAlpacaTier = min(liveAlpacaTier + 1, 3)
+                    }
                 }
             } else {
                 refreshLiveTodayWool()
@@ -113,7 +123,7 @@ struct FeedbackView: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(spacing: 18) {
                 // 這裡用輕微 idle animation 表示「正在進行中的一天」。
-                AlpacaFeedbackSnapshot(woolG: displayedTodayWool, size: 150, isLive: true)
+                AlpacaFeedbackSnapshot(woolG: displayedTodayWool, size: 150, isLive: true, growthTier: displayedLiveAlpacaTier)
                     .offset(y: liveAlpacaOffset)
                     .animation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true), value: liveAlpacaOffset)
                     .onAppear { liveAlpacaOffset = 4 }
@@ -212,6 +222,7 @@ struct FeedbackView: View {
         let openTodayStat = allStats.first { calendar.isDate($0.date, inSameDayAs: today) && !$0.isClosed }
         let anyTodayStat = allStats.first { calendar.isDate($0.date, inSameDayAs: today) }
         liveTodayWool = (openTodayStat ?? anyTodayStat)?.woolG ?? 0
+        liveAlpacaTier = RewardEngine.alpacaGrowthTier(for: today)
     }
 }
 
@@ -441,7 +452,15 @@ private struct WeeklySnapshotCell: View {
                 .font(.system(.subheadline, design: .rounded).weight(.semibold))
                 .foregroundStyle(Theme.primaryText)
 
-            AlpacaFeedbackSnapshot(woolG: stat.woolG, size: 30)
+            AlpacaFeedbackSnapshot(
+                woolG: stat.woolG,
+                size: 30,
+                growthTier: AlpacaFeedbackSnapshot.tierForRecordedActions(
+                    startCount: stat.startCount,
+                    stuckCount: stat.stuckCount,
+                    doneCount: stat.doneCount
+                )
+            )
         }
         .frame(maxWidth: .infinity, minHeight: 76)
         .padding(.vertical, 8)
@@ -479,33 +498,37 @@ private struct WeeklySnapshotCell: View {
 
 }
 
-/// 共用羊駝顯示元件：羊駝切圖規則集中在 B 的 FeedbackView，Today 之後只要傳入今日累積羊毛即可。
+/// 共用羊駝顯示元件：羊駝切圖規則集中在 B 的 FeedbackView。
 struct AlpacaFeedbackSnapshot: View {
     let woolG: Int
     var size: CGFloat
     var isLive: Bool = false
+    var growthTier: Int? = nil
 
     private static let assetNames = ["alpaca_0", "alpaca_1", "alpaca_2", "alpaca_3"]
 
-    /// 給 Today / Feedback 共用：依後台累積羊毛判斷目前應顯示第幾階段羊駝。
-    /// Demo 只需要三次變化；達到第 3 階後會固定顯示第四張滿毛圖。
-    static func tier(forWoolG woolG: Int) -> Int {
-        switch woolG {
-        case ...0: return 0
-        case ..<60: return 1
-        case ..<120: return 2
-        default: return 3
-        }
+    /// 羊駝圖片只看「成長次數」，不看目前幾克羊毛；成長三次後固定在最多毛的圖。
+    static func tier(forGrowthCount growthCount: Int) -> Int {
+        min(max(growthCount, 0), assetNames.count - 1)
+    }
+
+    /// 歷史快照沒有逐次事件資料時，用當天已記錄的主要行為次數作為快照階段。
+    static func tierForRecordedActions(startCount: Int, stuckCount: Int, doneCount: Int) -> Int {
+        tier(forGrowthCount: startCount + stuckCount + doneCount)
     }
 
     /// 給其他頁面需要直接取圖名時使用，避免各頁各自硬寫 alpaca_0...3。
     static func assetName(forTier tier: Int) -> String {
-        let safeTier = min(max(tier, 0), assetNames.count - 1)
+        let safeTier = Self.tier(forGrowthCount: tier)
         return assetNames[safeTier]
     }
 
     private var tier: Int {
-        Self.tier(forWoolG: woolG)
+        if let growthTier {
+            return Self.tier(forGrowthCount: growthTier)
+        }
+
+        return Self.tier(forGrowthCount: woolG > 0 ? 1 : 0)
     }
 
     private var assetName: String {

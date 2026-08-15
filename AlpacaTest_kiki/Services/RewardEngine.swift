@@ -21,6 +21,8 @@ enum RewardEvent {
 }
 
 enum RewardEngine {
+    private static let maxAlpacaGrowthTier = 3
+
     // 單次行為獲得的羊毛克數只存在後台；顯示時由回饋／結算頁讀取 DailyStat.woolG。
     static func woolFor(_ event: RewardEvent) -> Int {
         switch event {
@@ -67,9 +69,32 @@ enum RewardEngine {
             break
         }
 
+        let growthTier = recordAlpacaGrowth(for: stat.date)
+
         try? context.save()
         NotificationCenter.default.post(name: .woolGained, object: nil,
-                                        userInfo: ["grams": grams, "totalToday": stat.woolG])
+                                        userInfo: ["grams": grams, "totalToday": stat.woolG, "growthTier": growthTier])
+    }
+
+    /// 回饋頁羊駝切圖規則：只看今天已成長幾次，不看目前累積幾克。
+    static func alpacaGrowthTier(for date: Date = Date()) -> Int {
+        UserDefaults.standard.integer(forKey: alpacaGrowthKey(for: date))
+    }
+
+    @discardableResult
+    private static func recordAlpacaGrowth(for date: Date) -> Int {
+        let key = alpacaGrowthKey(for: date)
+        let nextTier = min(alpacaGrowthTier(for: date) + 1, maxAlpacaGrowthTier)
+        UserDefaults.standard.set(nextTier, forKey: key)
+        return nextTier
+    }
+
+    private static func alpacaGrowthKey(for date: Date) -> String {
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        let year = components.year ?? 0
+        let month = components.month ?? 0
+        let day = components.day ?? 0
+        return "reward.alpacaGrowthTier.\(year)-\(month)-\(day)"
     }
 
     /// Fetches today's DailyStat, creating one if the day hasn't been opened yet.
