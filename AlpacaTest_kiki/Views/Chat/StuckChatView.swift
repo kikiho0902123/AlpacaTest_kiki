@@ -103,6 +103,7 @@ struct StuckChatView: View {
                                  // 寫一筆 chatHelpful，B 的回饋頁要不要顯示由 B 決定（不顯示也無害）。
                                  modelContext.insert(TaskLog(taskID: task.id, type: "chatHelpful",
                                                              content: "使用者標記這次卡關解套有幫助"))
+                                 RewardEngine.grant(.stuckHelpAccepted, context: modelContext)
                                  try? modelContext.save()
                                  dismiss()
                              },
@@ -115,11 +116,15 @@ struct StuckChatView: View {
                         let trimmed = noHelpText.trimmingCharacters(in: .whitespaces)
                         if !trimmed.isEmpty {
                             modelContext.insert(TaskLog(taskID: task.id, type: "noHelpFeedback", content: trimmed))
+                            RewardEngine.grant(.stuckHelpRejectedWithFeedback, context: modelContext)
                             try? modelContext.save()
                         }
                         dismiss()
                     },
-                    onSkip: { dismiss() }
+                    onSkip: {
+                        RewardEngine.grant(.stuckHelpRejectedWithoutFeedback, context: modelContext)
+                        dismiss()
+                    }
                 )
             }
         }
@@ -277,9 +282,9 @@ struct StuckChatView: View {
             catch { summary = "這次聊了「\(task.name)」的卡點。（AI 摘要暫時失敗，先以此記錄）" }
             if splitEnded { summary += "（此次對話最後決定將原任務拆分。）" }
 
-            // 若因拆分結束，Summary 記到母任務 = 本聊天的 task 本身（契約規則）
+            // 若因拆分結束，Summary 記到母任務 = 本聊天的 task 本身（契約規則）。
+            // 羊毛獎勵等使用者在 Summary 判斷有幫助／沒幫助後才發，避免固定加 60g。
             modelContext.insert(TaskLog(taskID: task.id, type: "chatSummary", content: summary))
-            RewardEngine.grant(.stuckChatDone, context: modelContext)
             try? modelContext.save()
             isLoading = false
             summaryText = summary                        // → STK-04
