@@ -31,9 +31,14 @@ struct AlpacaStatusView: View {
     @State private var tier: Int = 0
     @State private var isBlinking = false
 
-    /// B 的眨眼圖。maxTier / todayKey 是舊的平行計數器留下的，
-    /// 階段改由 RewardEngine.alpacaGrowthTier 決定之後就不需要了。
-    private static let blinkAssetName = "(("
+    private static let blinkAssetName = "alpaca_blink"
+
+    /// 羊駝顯示高度。眨眼圖的位置是照這個高度換算出來的，改這裡兩邊會一起跟著動。
+    private static let artworkHeight: CGFloat = 160
+
+    /// 四張羊駝圖都是 2:3（alpaca_0~2 是 1024×1536、alpaca_3 是 408×612），
+    /// scaledToFit 之後實際畫出來的寬度就是 高 × 2/3。
+    private static let artworkAspect: CGFloat = 2.0 / 3.0
 
     /// 今天「還開著」的那一筆 DailyStat。
     /// 一定要帶 !isClosed：收割後 EODFlow 會把舊的那筆設成 harvested+isClosed，
@@ -59,7 +64,7 @@ struct AlpacaStatusView: View {
             // 閉眼圖片只疊在羊駝上方短暫出現，製造 blink 效果。
             blinkOverlay
         }
-        .frame(height: 160)
+        .frame(height: Self.artworkHeight)
         .frame(maxWidth: .infinity)
         // 彈一下才有「拿到獎勵」的感覺。keyframeAnimator 由 tier 觸發，
         // 連續發放時會直接重跑而不是排隊，所以不會抖。
@@ -107,15 +112,34 @@ struct AlpacaStatusView: View {
 
     // MARK: - Blink animation
 
-    // 閉眼圖大小：四張羊駝的眼睛位置一致時，只需要調這個固定寬度。
-    // 數字變大 = 閉眼圖變大；數字變小 = 閉眼圖變小。
-    private var blinkWidth: CGFloat { 22 }
+    // 眨眼圖的位置改用「佔整張圖的比例」表示，不是寫死的 pt。
+    // 原本 22 / -19.5 / -46 是照 160pt 高度手調出來的，換算成比例後
+    // 在同樣高度下算出來完全一樣，但之後改顯示尺寸就不用重調。
+    // 四張圖的頭都在左上、眼睛都落在大約 (0.31, 0.20)，所以四階共用同一組比例。
 
-    // 閉眼圖左右位置：正數往右，負數往左。
-    private var blinkXOffset: CGFloat { -19.5 }
+    /// 眼睛中心在圖上的相對位置（0~1，左上角為原點）
+    private static let blinkCenter = CGPoint(x: 0.317, y: 0.213)
 
-    // 閉眼圖上下位置：正數往下，負數往上。
-    private var blinkYOffset: CGFloat { -46 }
+    /// 閉眼圖寬度佔整張圖寬度的比例
+    private static let blinkWidthRatio: CGFloat = 0.206
+
+    /// scaledToFit 之後羊駝實際佔的區域
+    private static var artworkSize: CGSize {
+        CGSize(width: artworkHeight * artworkAspect, height: artworkHeight)
+    }
+
+    private var blinkWidth: CGFloat {
+        Self.artworkSize.width * Self.blinkWidthRatio
+    }
+
+    /// offset 是從中心算的，所以要把相對座標減掉 0.5
+    private var blinkXOffset: CGFloat {
+        (Self.blinkCenter.x - 0.5) * Self.artworkSize.width
+    }
+
+    private var blinkYOffset: CGFloat {
+        (Self.blinkCenter.y - 0.5) * Self.artworkSize.height
+    }
 
     @ViewBuilder
     private var blinkOverlay: some View {
@@ -125,7 +149,7 @@ struct AlpacaStatusView: View {
                 .scaledToFit()
                 .frame(width: blinkWidth)
                 .offset(x: blinkXOffset, y: blinkYOffset)
-                .opacity(isBlinking ? 1:0)
+                .opacity(isBlinking ? 1 : 0)
                 .animation(.easeInOut(duration: 0.05), value: isBlinking)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
