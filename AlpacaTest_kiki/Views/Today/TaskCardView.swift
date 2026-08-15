@@ -65,27 +65,44 @@ struct TaskCardView: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             // 1. 分類色條
             RoundedRectangle(cornerRadius: 3)
                 .fill(categoryColor)
                 .frame(width: 5)
 
-            VStack(alignment: .leading, spacing: 12) {
-                // 名稱 + 電量圖示
-                HStack(alignment: .top) {
-                    Text(task.name)
-                        .font(.alpacaHeading)
-                        .foregroundStyle(Color.alpacaBrown)
-                        .strikethrough(isDone)
+            VStack(alignment: .leading, spacing: 16) {
+                // 標題區：名稱 →（必完成標籤 · 子分類）＋ 右側電量
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(task.name)
+                            .font(.alpacaHeading)
+                            .foregroundStyle(Color.alpacaBrown)
+                            .strikethrough(isDone)
+                            .fixedSize(horizontal: false, vertical: true)
 
-                    Spacer()
+                        if task.isMustToday || task.subcategory != nil {
+                            HStack(spacing: 8) {
+                                if task.isMustToday {
+                                    TagChip(text: "⚡️ 今日必完成", color: .alpacaOrange)
+                                }
+
+                                if let subcategory = task.subcategory {
+                                    Text(subcategory)
+                                        .font(.alpacaCaption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(minLength: 0)
 
                     ComplexityBattery(complexity: task.complexity)
                 }
 
                 // 進度條：一般卡片可拉（COM-02）；已拆分母任務唯讀（SPL-05）
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     if isSplitParent {
                         ProgressBarView(progress: task.progress, isDone: isDone)
                     } else {
@@ -101,7 +118,7 @@ struct TaskCardView: View {
 
                 // 操作按鈕列：已拆分母任務只留「…」→ 查看任務記錄（SPL-05）
                 if isSplitParent {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 12) {
                         Text("已拆分成子任務")
                             .font(.alpacaCaption)
                             .foregroundStyle(.secondary)
@@ -112,7 +129,7 @@ struct TaskCardView: View {
                     }
                 } else {
                     // 只留兩個 inline 按鈕，其餘收進「…」——四顆並排會把中文標籤擠成兩行
-                    HStack(spacing: 10) {
+                    HStack(spacing: 12) {
                         // 主要按鈕：開始 →（開始後）拆分
                         Button(action: primaryAction) {
                             Label(isStarted ? "拆分" : "開始",
@@ -142,7 +159,8 @@ struct TaskCardView: View {
                 }
             }
         }
-        .padding()
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
         .background(
             RoundedRectangle(cornerRadius: Theme.cardCornerRadius)
                 .fill(Color.white.opacity(0.9))
@@ -341,11 +359,14 @@ struct TaskCardView: View {
 #Preview {
     let notStarted = TodoTask(name: "整理書桌")
     notStarted.category = "生活"
+    notStarted.subcategory = "居家"
     notStarted.colorHex = "#D9733F"
     notStarted.complexity = 1
+    notStarted.isMustToday = true
 
     let started = TodoTask(name: "讀日文三小時")
     started.category = "學習"
+    started.subcategory = "日文"
     started.colorHex = "#6B8E5A"
     started.complexity = 2
     started.status = "started"
