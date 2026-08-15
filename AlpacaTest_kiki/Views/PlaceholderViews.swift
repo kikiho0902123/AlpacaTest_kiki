@@ -7,28 +7,7 @@
 
 import SwiftUI
 
-// 任務庫 - 之後再開發
-struct TaskLibraryView: View {
-    var body: some View {
-        NavigationStack {
-            VStack {
-                Spacer()
-                Image(systemName: "books.vertical.fill")
-                    .font(.system(size: 44))
-                    .foregroundStyle(Color.alpacaOrange.opacity(0.6))
-                Text("任務庫\n（開發中）")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 8)
-                Spacer()
-            }
-            .frame(maxWidth: .infinity)
-            .background(Color.alpacaCream.ignoresSafeArea())
-            .navigationTitle("任務庫")
-        }
-    }
-}
-
+// 任務庫已實作 → Views/Library/LibraryView.swift（LIB-C01/C03）
 
 // 個人化設定 - 之後再開發
 struct SettingsView: View {
@@ -52,5 +31,4 @@ struct SettingsView: View {
     }
 }
 
-#Preview("任務庫") { TaskLibraryView() }
 #Preview("個人化設定") { SettingsView() }

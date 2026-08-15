@@ -16,7 +16,7 @@ struct ContentView: View {
                     Label("今日任務", systemImage: "sun.max.fill")
                 }
 
-            TaskLibraryView()
+            LibraryView()
                 .tabItem {
                     Label("任務庫", systemImage: "books.vertical.fill")
                 }
