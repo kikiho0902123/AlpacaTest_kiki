@@ -28,6 +28,9 @@ struct SplitFlowModal: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
+    /// onAppear 會重複觸發，用旗標確保只打一次 API
+    @State private var didLoad = false
+
     private struct Row: Identifiable {
         let id = UUID()
         var text: String
@@ -63,7 +66,13 @@ struct SplitFlowModal: View {
                 }
             }
         }
-        .task { await loadSuggestions() }
+        // 不能用 .task {}：sheet 彈出時會重建 view 而取消請求（URLError.cancelled），
+        // 結果整個拆分流程都退化成罐頭子任務。改用不綁 view 生命週期的 Task {}。
+        .onAppear {
+            guard !didLoad else { return }
+            didLoad = true
+            Task { await loadSuggestions() }
+        }
         .overlay {
             if showConfirm {
                 DimmedModal {

@@ -32,6 +32,8 @@ struct StuckChatView: View {
     @State private var summaryText: String?
     @State private var showNoHelp = false
     @State private var noHelpText = ""
+    /// onAppear 會重複觸發，用旗標確保 R1 只發一次
+    @State private var didOpen = false
 
     private var userCount: Int { thread.filter { $0.role == "user" }.count }
     private var round: Int { min(userCount + 1, 8) }
@@ -59,7 +61,14 @@ struct StuckChatView: View {
             }
         }
         .interactiveDismissDisabled()                    // 離開一律走 STK-03 確認
-        .task { await requestReply() }                   // R1 開場
+        // R1 開場。這裡不能用 .task {}：它的生命週期綁在 view 上，而 fullScreenCover
+        // 在彈出過程中會重建內容 view，第一個請求會被取消（console 出現 URLError.cancelled），
+        // 於是降級成罐頭——使用者就看到一則罐頭開場白。改用不綁 view 的 Task {}。
+        .onAppear {
+            guard !didOpen else { return }               // onAppear 會重複觸發
+            didOpen = true
+            Task { await requestReply() }
+        }
         .sheet(isPresented: $showSplit) {
             SplitFlowModal(task: task, source: .fromChat, chatContext: thread, analysis: analysis) {
                 splitEnded = true
@@ -89,7 +98,14 @@ struct StuckChatView: View {
             }
             if let summary = summaryText {
                 SummaryModal(text: summary,
-                             onHelpful: { dismiss() },
+                             onHelpful: {
+                                 // 契約只定義了 noHelpFeedback，但「有幫助」不留下任何痕跡等於丟資料。
+                                 // 寫一筆 chatHelpful，B 的回饋頁要不要顯示由 B 決定（不顯示也無害）。
+                                 modelContext.insert(TaskLog(taskID: task.id, type: "chatHelpful",
+                                                             content: "使用者標記這次卡關解套有幫助"))
+                                 try? modelContext.save()
+                                 dismiss()
+                             },
                              onNotHelpful: { summaryText = nil; showNoHelp = true })
             }
             if showNoHelp {

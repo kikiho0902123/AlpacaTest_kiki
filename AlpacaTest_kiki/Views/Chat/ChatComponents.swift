@@ -42,10 +42,12 @@ struct MarkdownText: View {
     let raw: String
 
     private enum Block: Identifiable {
+        case heading(String)
         case paragraph(String)
         case bullet(String)
         var id: String {
             switch self {
+            case .heading(let s):   return "h\(s)"
             case .paragraph(let s): return "p\(s)"
             case .bullet(let s):    return "b\(s)"
             }
@@ -57,8 +59,17 @@ struct MarkdownText: View {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .map { line in
+                // 長的先比，否則 "# " 會先吃掉 "### "
+                for marker in ["#### ", "### ", "## ", "# "] where line.hasPrefix(marker) {
+                    return .heading(String(line.dropFirst(marker.count)))
+                }
                 for marker in ["- ", "• ", "* "] where line.hasPrefix(marker) {
                     return .bullet(String(line.dropFirst(marker.count)))
+                }
+                // 整行都是粗體 → 模型其實是想下標題，當標題處理
+                if line.hasPrefix("**"), line.hasSuffix("**"), line.count > 4,
+                   !line.dropFirst(2).dropLast(2).contains("**") {
+                    return .heading(String(line.dropFirst(2).dropLast(2)))
                 }
                 return .paragraph(line)
             }
@@ -76,6 +87,13 @@ struct MarkdownText: View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(blocks) { block in
                 switch block {
+                case .heading(let s):
+                    // 聊天泡泡裡的標題：靠字重和顏色做出層級，不要放大字級（會很吵）
+                    Text(inline(s))
+                        .fontWeight(.semibold)
+                        .foregroundStyle(ChatTheme.terracotta)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
                 case .paragraph(let s):
                     Text(inline(s))
                         .fixedSize(horizontal: false, vertical: true)

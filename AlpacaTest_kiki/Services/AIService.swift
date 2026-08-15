@@ -95,6 +95,9 @@ enum AIConfig {
     /// gpt-5 系列的話多程度（low/medium/high）。聊天泡泡固定 low，
     /// 這是「字數」最直接的旋鈕，比 prompt 裡寫「100 字」有效得多。
     static let chatVerbosity = "low"
+    /// 低延遲服務層（已實測本帳號可用）。單價較高但 demo 用量可忽略，換聊天不卡頓。
+    /// 若帳號被降級或改用其他 model 而收到 400，把這行改成 nil 就會退回一般排隊。
+    static let serviceTier: String? = "priority"
 }
 
 enum AIServiceError: LocalizedError {
@@ -172,7 +175,9 @@ final class AIService {
         }
 
         do {
-            let raw = try await callChat(apiMessages, wantJSON: true)
+            // R1 只是打招呼：沒有使用者訊息可分析，不需要思考預算，用 minimal 換開場速度
+            let raw = try await callChat(apiMessages, wantJSON: true,
+                                         effort: round <= 1 ? "minimal" : AIConfig.reasoningEffort)
             var reply = Self.decodeStuckReply(raw)
             // tried 是防重複推薦的關鍵，不能讓模型「忘記」把上一輪的帶過來 → 程式面合併
             reply.analysis = Self.carryForward(previous, into: reply.analysis)
@@ -254,7 +259,8 @@ final class AIService {
     // MARK: - OpenAI 呼叫（含 429/5xx 退避重試 ×2：1s/3s）
 
     private func callChat(_ messages: [[String: String]], wantJSON: Bool,
-                          verbosity: String = AIConfig.chatVerbosity) async throws -> String {
+                          verbosity: String = AIConfig.chatVerbosity,
+                          effort: String = AIConfig.reasoningEffort) async throws -> String {
         let key = Secrets.openAIKey
         guard !key.isEmpty else { throw AIServiceError.missingKey }
 
@@ -263,9 +269,10 @@ final class AIService {
         // gpt-5 系列是 reasoning 模型：不送 temperature/max_tokens（會被拒），
         // 改用 reasoning_effort 控思考量、verbosity 控話長度
         if AIConfig.model.hasPrefix("gpt-5") {
-            body["reasoning_effort"] = AIConfig.reasoningEffort
+            body["reasoning_effort"] = effort
             body["verbosity"] = verbosity
         }
+        if let tier = AIConfig.serviceTier { body["service_tier"] = tier }
 
         var req = URLRequest(url: AIConfig.endpoint, timeoutInterval: 45)
         req.httpMethod = "POST"
