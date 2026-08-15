@@ -137,6 +137,18 @@ struct HistoricalTaskSummary: Codable {
     var score: Int
 }
 
+/// 自然語言建立任務的解析結果。
+/// 欄位刻意對齊 `TodoTask`，讓 UI 可以直接預填任務編輯器。
+struct ParsedTask {
+    var name: String
+    var startDate: Date?
+    var isUrgent: Bool
+    var isMustToday: Bool
+    var complexity: Int
+    var category: String?
+    var note: String?
+}
+
 /// 一週的原始素材（B 的回饋頁用）。刻意不吃 B 的 private WeeklyFeedbackData，
 /// 而是吃 A 的 model 陣列 —— B 手上已經有這三包，呼叫時不用組任何東西。
 ///
@@ -290,6 +302,22 @@ final class AIService {
 
     private func degrade(_ error: Error, _ what: String) {
         print("⚠️ AI \(what) 失敗，改用罐頭回應：\(error.localizedDescription)")
+    }
+
+    /// 將使用者輸入的自然語言轉成可供任務編輯器預填的欄位。
+    ///
+    /// 目前是供 UI 串接的 mock 空殼；真正的模型解析會在下一版接上。
+    /// 傳入任何文字都固定回傳規格例句對應的假資料。
+    func parseTask(_ input: String) async throws -> ParsedTask {
+        ParsedTask(
+            name: "經濟學期末報告",
+            startDate: Self.mockNextWednesday(),
+            isUrgent: false,
+            isMustToday: false,
+            complexity: 2,
+            category: "課業",
+            note: "完全沒頭緒"
+        )
     }
 
     /// 卡關聊天。round 由呼叫端算（該 session 的 user 訊息數 + 1；R1 = AI 開場）
@@ -594,6 +622,22 @@ final class AIService {
         if let dict = obj as? [String: Any], let arr = dict["subtasks"] as? [String] { return arr }
         if let arr = obj as? [String] { return arr }
         return []
+    }
+
+    /// Mock 例句中的「下週三」。以當地日曆的下個星期為準，回傳該日 00:00。
+    nonisolated private static func mockNextWednesday(
+        from referenceDate: Date = Date(),
+        calendar inputCalendar: Calendar = .autoupdatingCurrent
+    ) -> Date? {
+        var calendar = inputCalendar
+        calendar.timeZone = .autoupdatingCurrent
+        guard let startOfWeek = calendar.dateInterval(of: .weekOfYear, for: referenceDate)?.start,
+              let startOfNextWeek = calendar.date(byAdding: .weekOfYear, value: 1, to: startOfWeek)
+        else { return nil }
+
+        let weekday = calendar.component(.weekday, from: startOfNextWeek)
+        let daysUntilWednesday = (4 - weekday + 7) % 7
+        return calendar.date(byAdding: .day, value: daysUntilWednesday, to: startOfNextWeek)
     }
 
     // MARK: - Mock（round 對應 STK-02A~H 的罐頭劇本）
