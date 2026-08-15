@@ -137,6 +137,36 @@ struct HistoricalTaskSummary: Codable {
     var score: Int
 }
 
+/// 自然語言建立任務的解析結果。
+/// 欄位刻意對齊 `TodoTask`，讓 UI 可以直接預填任務編輯器。
+struct ParsedTask {
+    var name: String
+    var startDate: Date?
+    var isUrgent: Bool
+    var isMustToday: Bool
+    var complexity: Int
+    var category: String?
+    var note: String?
+
+    init(
+        name: String,
+        startDate: Date? = nil,
+        isUrgent: Bool = false,
+        isMustToday: Bool = false,
+        complexity: Int = 1,
+        category: String? = nil,
+        note: String? = nil
+    ) {
+        self.name = name
+        self.startDate = startDate
+        self.isUrgent = isUrgent
+        self.isMustToday = isMustToday
+        self.complexity = complexity
+        self.category = category
+        self.note = note
+    }
+}
+
 /// 一週的原始素材（B 的回饋頁用）。刻意不吃 B 的 private WeeklyFeedbackData，
 /// 而是吃 A 的 model 陣列 —— B 手上已經有這三包，呼叫時不用組任何東西。
 ///
@@ -252,11 +282,15 @@ enum AIServiceError: LocalizedError {
     case missingKey
     case badStatus(Int, String)
     case emptyReply
+    case emptyTaskInput
+    case invalidTaskResponse
     var errorDescription: String? {
         switch self {
         case .missingKey: "還沒設定 API key（Secrets.swift）"
         case .badStatus(let code, let body): "API 回應 \(code)：\(body.prefix(200))"
         case .emptyReply: "API 回了空內容"
+        case .emptyTaskInput: "請先描述一下你的任務。"
+        case .invalidTaskResponse: "AI 回傳的任務格式不完整，請再試一次。"
         }
     }
 }
@@ -290,6 +324,62 @@ final class AIService {
 
     private func degrade(_ error: Error, _ what: String) {
         print("⚠️ AI \(what) 失敗，改用罐頭回應：\(error.localizedDescription)")
+    }
+
+    /// 單筆相容介面；新流程使用 `parseTasks(_:)`。
+    func parseTask(_ input: String) async throws -> ParsedTask {
+        guard let first = try await parseTasks(input).first else {
+            throw AIServiceError.invalidTaskResponse
+        }
+        return first
+    }
+
+    /// 將一段自然語言拆成一到多筆任務草稿，最多回傳 8 筆。
+    /// `useMock == false` 時走真實 API；解析錯誤會回到 UI 顯示，不會偷偷改用 mock。
+    func parseTasks(_ input: String) async throws -> [ParsedTask] {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw AIServiceError.emptyTaskInput }
+        if useMock { return Self.mockParsedTasks() }
+
+        var calendar = Calendar.autoupdatingCurrent
+        calendar.timeZone = .autoupdatingCurrent
+        let today = Self.isoDate(Date(), calendar: calendar)
+        let system = """
+        你是繁體中文任務解析器。把使用者的一段自然語言整理成一到多筆任務草稿。
+
+        現在日期：\(today)
+        時區：\(calendar.timeZone.identifier)
+
+        規則：
+        - 每個「彼此獨立、可以分開完成的成果」各建立一筆任務。
+        - 使用者明確說了多件事時要拆成多筆；只有一件事時只回一筆。
+        - 不要把一個複雜目標自行腦補成多個步驟。只有使用者真的描述了多個獨立任務才拆分。
+        - 最多回傳 8 筆；依照使用者描述中出現的順序排列。
+        - name：只保留真正要完成的工作，簡短、可執行，不要包含日期或情緒。
+        - startDate：該筆任務明確提到的日期，解析成 YYYY-MM-DD；沒提到日期就填 null。
+        - 「今天／明天／後天／本週幾／下週幾／月底」等相對日期，要依現在日期與時區換算。
+        - 多筆任務時，日期只套用到語句所指的那一筆；只有明確共用的日期才套用到多筆。
+        - 日期若是在描述其他行程，只留在 note，不要誤當成任務日期。
+        - 如果使用者明確表示今天是唯一能做的時間，startDate 填今天，isMustToday 填 true。
+        - isUrgent 與 startDate 是獨立欄位，有日期的任務仍然可以是緊急任務。
+        - isUrgent：提到「急、趕、快來不及、死線逼近、截止今天／明天」等語意時填 true；只有一般未來日期不算緊急。
+        - isMustToday：明確今天必須做，或今天是唯一可用時間才是 true。
+        - complexity：0 易、1 中、2 難。依工作量、未知程度與使用者敘述判斷。
+        - category：用 2 到 4 個中文字概括，例如「學校」「工作」「生活」；無法判斷填 null。
+        - note：保留會幫助執行任務的脈絡、限制或卡點；沒有就填 null。不要重複 name。
+        """
+
+        let raw = try await callChat(
+            [
+                ["role": "developer", "content": system],
+                ["role": "user", "content": trimmed]
+            ],
+            wantJSON: true,
+            responseSchema: Self.parsedTasksSchema,
+            verbosity: "low",
+            effort: AIConfig.lowestEffort
+        )
+        return try Self.decodeParsedTasks(raw, calendar: calendar)
     }
 
     /// 卡關聊天。round 由呼叫端算（該 session 的 user 訊息數 + 1；R1 = AI 開場）
@@ -468,13 +558,25 @@ final class AIService {
     // MARK: - OpenAI 呼叫（含 429/5xx 退避重試 ×2：1s/3s）
 
     private func callChat(_ messages: [[String: String]], wantJSON: Bool,
+                          responseSchema: [String: Any]? = nil,
                           verbosity: String = AIConfig.chatVerbosity,
                           effort: String = AIConfig.reasoningEffort) async throws -> String {
         let key = Secrets.openAIKey
         guard !key.isEmpty else { throw AIServiceError.missingKey }
 
         var body: [String: Any] = ["model": AIConfig.model, "messages": messages]
-        if wantJSON { body["response_format"] = ["type": "json_object"] }
+        if let responseSchema {
+            body["response_format"] = [
+                "type": "json_schema",
+                "json_schema": [
+                    "name": "parsed_tasks",
+                    "strict": true,
+                    "schema": responseSchema
+                ]
+            ]
+        } else if wantJSON {
+            body["response_format"] = ["type": "json_object"]
+        }
         // gpt-5 系列是 reasoning 模型：不送 temperature/max_tokens（會被拒），
         // 改用 reasoning_effort 控思考量、verbosity 控話長度
         if AIConfig.model.hasPrefix("gpt-5") {
@@ -596,7 +698,155 @@ final class AIService {
         return []
     }
 
+    private struct ParsedTaskPayload: Decodable {
+        let name: String
+        let startDate: String?
+        let isUrgent: Bool
+        let isMustToday: Bool
+        let complexity: Int
+        let category: String?
+        let note: String?
+    }
+
+    private struct ParsedTasksPayload: Decodable {
+        let tasks: [ParsedTaskPayload]
+    }
+
+    private static let parsedTaskSchema: [String: Any] = [
+        "type": "object",
+        "additionalProperties": false,
+        "properties": [
+            "name": ["type": "string"],
+            "startDate": ["type": ["string", "null"]],
+            "isUrgent": ["type": "boolean"],
+            "isMustToday": ["type": "boolean"],
+            "complexity": ["type": "integer", "enum": [0, 1, 2]],
+            "category": ["type": ["string", "null"]],
+            "note": ["type": ["string", "null"]]
+        ],
+        "required": [
+            "name", "startDate", "isUrgent", "isMustToday",
+            "complexity", "category", "note"
+        ]
+    ]
+
+    private static let parsedTasksSchema: [String: Any] = [
+        "type": "object",
+        "additionalProperties": false,
+        "properties": [
+            "tasks": [
+                "type": "array",
+                "items": parsedTaskSchema
+            ]
+        ],
+        "required": ["tasks"]
+    ]
+
+    private static func decodeParsedTasks(_ raw: String, calendar: Calendar) throws -> [ParsedTask] {
+        let cleaned = raw
+            .replacingOccurrences(of: "```json", with: "")
+            .replacingOccurrences(of: "```", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = cleaned.data(using: .utf8),
+              let payload = try? JSONDecoder().decode(ParsedTasksPayload.self, from: data),
+              !payload.tasks.isEmpty,
+              payload.tasks.count <= 8
+        else { throw AIServiceError.invalidTaskResponse }
+
+        return try payload.tasks.map { try parsedTask(from: $0, calendar: calendar) }
+    }
+
+    private static func parsedTask(from payload: ParsedTaskPayload, calendar: Calendar) throws -> ParsedTask {
+        let name = payload.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw AIServiceError.invalidTaskResponse }
+
+        let startDate: Date?
+        if let value = payload.startDate {
+            guard let parsedDate = date(fromISO: value, calendar: calendar) else {
+                throw AIServiceError.invalidTaskResponse
+            }
+            startDate = parsedDate
+        } else {
+            startDate = nil
+        }
+
+        return ParsedTask(
+            name: name,
+            startDate: startDate,
+            isUrgent: payload.isUrgent,
+            isMustToday: payload.isMustToday,
+            complexity: payload.complexity,
+            category: normalized(payload.category),
+            note: normalized(payload.note)
+        )
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty
+        else { return nil }
+        return trimmed
+    }
+
+    private static func isoDate(_ date: Date, calendar: Calendar) -> String {
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+    }
+
+    private static func date(fromISO value: String, calendar: Calendar) -> Date? {
+        let values = value.split(separator: "-").compactMap { Int($0) }
+        guard values.count == 3 else { return nil }
+        var components = DateComponents()
+        components.calendar = calendar
+        components.timeZone = calendar.timeZone
+        components.year = values[0]
+        components.month = values[1]
+        components.day = values[2]
+        guard let date = calendar.date(from: components),
+              isoDate(date, calendar: calendar) == value
+        else { return nil }
+        return calendar.startOfDay(for: date)
+    }
+
+    /// Mock 例句中的「下週三」。以當地日曆的下個星期為準，回傳該日 00:00。
+    private static func mockNextWednesday(
+        from referenceDate: Date = Date(),
+        calendar inputCalendar: Calendar = .autoupdatingCurrent
+    ) -> Date? {
+        var calendar = inputCalendar
+        calendar.timeZone = .autoupdatingCurrent
+        guard let startOfWeek = calendar.dateInterval(of: .weekOfYear, for: referenceDate)?.start,
+              let startOfNextWeek = calendar.date(byAdding: .weekOfYear, value: 1, to: startOfWeek)
+        else { return nil }
+
+        let weekday = calendar.component(.weekday, from: startOfNextWeek)
+        let daysUntilWednesday = (4 - weekday + 7) % 7
+        return calendar.date(byAdding: .day, value: daysUntilWednesday, to: startOfNextWeek)
+    }
+
     // MARK: - Mock（round 對應 STK-02A~H 的罐頭劇本）
+
+    private static func mockParsedTasks() -> [ParsedTask] {
+        [
+            ParsedTask(
+                name: "經濟學期末報告",
+                startDate: mockNextWednesday(),
+                isUrgent: false,
+                isMustToday: false,
+                complexity: 2,
+                category: "課業",
+                note: "完全沒頭緒"
+            ),
+            ParsedTask(
+                name: "準備健行用品",
+                isUrgent: true,
+                isMustToday: true,
+                complexity: 0,
+                category: "生活",
+                note: "明天要去健行"
+            )
+        ]
+    }
 
     nonisolated static func mockStuckReply(round: Int, task: TodoTask) -> StuckReply {
         switch round {

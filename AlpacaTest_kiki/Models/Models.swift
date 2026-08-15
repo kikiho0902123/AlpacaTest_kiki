@@ -16,8 +16,7 @@ final class TodoTask {
     var category: String?
     var subcategory: String?
     var colorHex: String?
-    // Three date states (TSK-02): startDate set = scheduled;
-    // nil + isUrgent = unscheduled-urgent; nil + !isUrgent = unscheduled-not-urgent
+    // startDate 與 isUrgent 是獨立欄位：已排程任務也可以同時是緊急任務。
     var startDate: Date?
     var isUrgent: Bool = false
     var isMustToday: Bool = false

@@ -22,18 +22,15 @@ struct TaskEditorView: View {
     /// 建立成功後通知呼叫端（AI 流程用來把整條 sheet 收掉）。取消不會呼叫。
     private let onSaved: (() -> Void)?
 
-    /// TSK-02 的三種日期狀態。對應 Models 的規則：
-    /// startDate 有值 = 已排程；nil + isUrgent = 未排但緊急；nil + !isUrgent = 未排不緊急。
+    /// 日期是否已排程。緊急程度是獨立欄位，有日期的任務也可以是緊急任務。
     private enum DateState: Int, CaseIterable {
         case scheduled          // 指定日期
-        case unscheduledUrgent  // 未排日期但緊急
-        case unscheduledLater   // 未排日期不緊急
+        case unscheduled        // 未排日期
 
         var label: String {
             switch self {
             case .scheduled:         return "指定日期"
-            case .unscheduledUrgent: return "未排・緊急"
-            case .unscheduledLater:  return "未排・不急"
+            case .unscheduled:       return "未排日期"
             }
         }
     }
@@ -43,6 +40,7 @@ struct TaskEditorView: View {
 
     @State private var name: String
     @State private var note: String
+    @State private var isUrgent: Bool
     @State private var isMustToday: Bool
     @State private var complexity: Int
     @State private var dateState: DateState
@@ -103,20 +101,12 @@ struct TaskEditorView: View {
         _name        = State(initialValue: name)
         _note        = State(initialValue: note ?? "")
         _category    = State(initialValue: category)
+        _isUrgent    = State(initialValue: isUrgent)
         _isMustToday = State(initialValue: isMustToday)
         _complexity  = State(initialValue: complexity)
         _startDate   = State(initialValue: startDate ?? Calendar.current.startOfDay(for: .now))
 
-        // 三種日期狀態（TSK-02）：有日期 = 指定日期；沒日期看 isUrgent 分兩種
-        let resolvedDateState: DateState
-        if hasExplicitDate {
-            resolvedDateState = .scheduled
-        } else if isUrgent {
-            resolvedDateState = .unscheduledUrgent
-        } else {
-            resolvedDateState = .unscheduledLater
-        }
-        _dateState = State(initialValue: resolvedDateState)
+        _dateState = State(initialValue: hasExplicitDate ? .scheduled : .unscheduled)
     }
 
     // MARK: - Mode
@@ -252,6 +242,7 @@ struct TaskEditorView: View {
                 }
 
                 Section("設定") {
+                    Toggle("緊急任務", isOn: $isUrgent)
                     Toggle("今天一定要完成 ⚡️", isOn: $isMustToday)
 
                     Picker("複雜程度", selection: $complexity) {
@@ -303,18 +294,14 @@ struct TaskEditorView: View {
         target.isMustToday = isMustToday
         target.complexity = complexity
 
-        // TSK-02：三種狀態只靠 startDate / isUrgent 兩個欄位表達
+        // 日期與緊急程度獨立保存；排定日期不應清掉 AI 或使用者選的緊急狀態。
         switch dateState {
         case .scheduled:
             target.startDate = Calendar.current.startOfDay(for: startDate)
-            target.isUrgent = false
-        case .unscheduledUrgent:
+        case .unscheduled:
             target.startDate = nil
-            target.isUrgent = true
-        case .unscheduledLater:
-            target.startDate = nil
-            target.isUrgent = false
         }
+        target.isUrgent = isUrgent
 
         try? modelContext.save()
         onSaved?()

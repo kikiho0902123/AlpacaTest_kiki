@@ -3,10 +3,10 @@
 //  AlpacaTest_kiki
 //
 //  用一段自然語言描述建立任務。Owned by A。
-//  解析交給 C 的 AIService.parseTask(_:)；這裡只負責輸入、載入中、失敗重試。
+//  解析交給 C 的 AIService.parseTasks(_:)；這裡只負責輸入、載入中、失敗重試。
 //
 //  ★ AI 不會自己建立任務 ★
-//  解析結果一律先丟進 TaskEditorView 讓使用者看過、可以改，按下「建立任務」才寫進資料庫。
+//  解析結果一律先丟進批次確認頁，按下「建立任務」才一次寫進資料庫。
 //
 
 import SwiftUI
@@ -18,7 +18,8 @@ struct AITaskCreationView: View {
     /// 使用者輸入的描述。失敗時絕對不清掉。
     @State private var input = ""
     @State private var phase: Phase = .editing
-    @State private var draft: DraftBox?
+    @State private var batchDraft: BatchDraft?
+    @State private var manualDraft: ManualDraft?
 
     private enum Phase: Equatable {
         case editing
@@ -27,7 +28,12 @@ struct AITaskCreationView: View {
     }
 
     /// sheet(item:) 需要 Identifiable，包一層避免動到 C 的型別
-    private struct DraftBox: Identifiable {
+    private struct BatchDraft: Identifiable {
+        let id = UUID()
+        let tasks: [ParsedTask]
+    }
+
+    private struct ManualDraft: Identifiable {
         let id = UUID()
         let parsed: ParsedTask
     }
@@ -45,7 +51,7 @@ struct AITaskCreationView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        Text("用一句話描述你想做的事，AI 會幫你整理成任務。")
+                        Text("用一段話描述你想做的事，AI 會幫你整理成一個或多個任務。")
                             .font(.alpacaBody)
                             .foregroundStyle(Color.alpacaBrown.opacity(0.8))
 
@@ -71,10 +77,15 @@ struct AITaskCreationView: View {
                 }
             }
         }
-        // 解析成功 → 交給共用編輯器，使用者確認後才真的建立
-        .sheet(item: $draft) { box in
+        // 解析成功 → 顯示批次清單，使用者確認後才一次建立
+        .sheet(item: $batchDraft) { box in
+            ParsedTaskBatchView(tasks: box.tasks) {
+                dismiss()
+            }
+        }
+        .sheet(item: $manualDraft) { box in
             TaskEditorView(prefill: box.parsed) {
-                dismiss()          // 編輯器按下建立 → 整條流程收掉
+                dismiss()
             }
         }
     }
@@ -87,7 +98,7 @@ struct AITaskCreationView: View {
                 .font(Theme.sectionTitleFont)
                 .foregroundStyle(Color.alpacaBrown.opacity(0.75))
 
-            TextField("例如：下週三要交經濟學報告，我完全沒頭緒",
+            TextField("例如：明天買菜，下週三交經濟學報告",
                       text: $input,
                       axis: .vertical)
                 .lineLimit(4...8)
@@ -156,7 +167,7 @@ struct AITaskCreationView: View {
 
                 Button {
                     // 改用手動：把打過的字帶成備註，不要讓它白打
-                    draft = DraftBox(parsed: ParsedTask(name: "", note: trimmedInput))
+                    manualDraft = ManualDraft(parsed: ParsedTask(name: "", note: trimmedInput))
                 } label: {
                     Label("改用手動建立", systemImage: "square.and.pencil")
                         .font(.subheadline)
@@ -180,9 +191,9 @@ struct AITaskCreationView: View {
 
         phase = .parsing
         do {
-            let parsed = try await AIService.shared.parseTask(text)
+            let parsed = try await AIService.shared.parseTasks(text)
             phase = .editing
-            draft = DraftBox(parsed: parsed)
+            batchDraft = BatchDraft(tasks: parsed)
         } catch {
             // 輸入完整保留，使用者可以直接重試或改手動
             phase = .failed(error.localizedDescription)
