@@ -6,9 +6,17 @@
 //
 //  ★ STATE-09 IRON LAW ★
 //  Image only. No gram counts. No captions. No numbers of any kind.
-//  The fluff tier is derived from today's woolG, but that mapping lives ONLY in
-//  code — the number itself is never rendered anywhere on this screen. Grams are
-//  first revealed in B's achievement modal at end of day.
+//
+//  分階規則（Demo 版，設計師指定）：**每次發羊毛就升一階**，不是看公克數門檻。
+//  Demo 的總量根本到不了公克門檻，逐次升階才看得出獎勵。
+//    tier = min(今天的發放次數, 3) → alpaca_0…alpaca_3
+//
+//  為什麼用 @AppStorage 而不是 DailyStat 的計數器：
+//    RewardEngine 只有 startCount / stuckCount / doneCount，
+//    `.acceptSplit` 和 `.completionNoteBonus` 兩種事件是 `break`，不加任何計數。
+//    用那三個欄位相加會漏掉「接受拆分」——而那正好是 Demo 腳本第 3 步，
+//    羊駝會在最關鍵的時候不動。乾淨的長期解是在 DailyStat 加一個 grantCount，
+//    但那是 B 的檔案，需要先講好。在那之前這裡自己存一份當日計數。
 //
 
 import SwiftUI
@@ -20,48 +28,109 @@ import UIKit
 struct AlpacaStatusView: View {
     @Query(sort: \DailyStat.date) private var allStats: [DailyStat]
 
+    /// 當日發放次數，跨 view 重建（切分頁、關 sheet）都要留著，
+    /// 否則羊駝會被打回光溜溜的 alpaca_0。
+    @AppStorage("alpaca.grantDay")   private var storedDay: String = ""
+    @AppStorage("alpaca.grantCount") private var storedCount: Int = 0
+
     @State private var tier: Int = 0
 
-    /// Fluff tiers. Thresholds are deliberately code-only (STATE-09).
-    private static let tierThresholds: [Int] = [300, 800, 1500]
+    private static let maxTier = 3
 
-    private static func tier(forWoolG woolG: Int) -> Int {
-        var tier = 0
-        for threshold in tierThresholds where woolG >= threshold {
-            tier += 1
-        }
-        return tier
+    /// 當天的 key。用本地日曆，跟 TodayView 的當日區間同一套時區觀念。
+    private var todayKey: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: Date())
     }
 
-    /// Today's open DailyStat, matching RewardEngine's own lookup rule.
-    private var todayWoolG: Int {
-        allStats.first {
-            Calendar.current.isDateInToday($0.date) && !$0.isClosed
-        }?.woolG ?? 0
+    /// 今天「還開著」的那一筆 DailyStat。
+    /// 一定要帶 !isClosed：收割後 EODFlow 會把舊的那筆設成 harvested+isClosed，
+    /// 然後**再插入一筆今天的新 DailyStat**（openActiveWorkdayIfNeeded）。
+    /// 只比日期的話同一天會有兩筆、抓到哪一筆不確定。這裡跟 RewardEngine 用同一條規則。
+    private var openTodayStat: DailyStat? {
+        allStats.first { Calendar.current.isDateInToday($0.date) && !$0.isClosed }
+    }
+
+    /// 當前這個工作日已經累積的羊毛。
+    /// 收割後新開的那一筆是 0，跨日新開的也是 0 —— 兩種情況羊駝都該回到第 0 階，
+    /// 所以「開著的那筆 woolG == 0」就是唯一的歸零條件，不必去猜 harvested 旗標。
+    private var openTodayWoolG: Int {
+        openTodayStat?.woolG ?? 0
     }
 
     var body: some View {
-        alpaca
-            .frame(height: 160)
-            .frame(maxWidth: .infinity)
-            .id(tier)                       // tier change → remove + insert → crossfade
-            .transition(.opacity)
-            .accessibilityLabel("羊駝狀態")  // no grams, even to VoiceOver
-            .onAppear {
-                tier = Self.tier(forWoolG: todayWoolG)
+        ZStack {
+            alpaca
+                .id(tier)                    // 換階 → 移除＋插入 → 淡入淡出
+                .transition(.opacity)
+        }
+        .frame(height: 160)
+        .frame(maxWidth: .infinity)
+        // 彈一下才有「拿到獎勵」的感覺。keyframeAnimator 由 tier 觸發，
+        // 連續發放時會直接重跑而不是排隊，所以不會抖。
+        .keyframeAnimator(initialValue: 1.0, trigger: tier) { content, scale in
+            content.scaleEffect(scale)
+        } keyframes: { _ in
+            KeyframeTrack {
+                SpringKeyframe(1.08, duration: 0.18, spring: .snappy)
+                SpringKeyframe(1.0,  duration: 0.30, spring: .bouncy)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .woolGained)) { notification in
-                let total = notification.userInfo?["totalToday"] as? Int ?? todayWoolG
-                withAnimation(.easeInOut(duration: 0.45)) {
-                    tier = Self.tier(forWoolG: total)
-                }
-            }
+        }
+        .accessibilityLabel("羊駝狀態")        // 連 VoiceOver 都不講公克數
+        .onAppear { syncTier() }
+        .onReceive(NotificationCenter.default.publisher(for: .woolGained)) { _ in
+            registerGrant()
+        }
+        // 收割後 / 跨日：新開的工作日 woolG 是 0 → 羊駝歸零
+        .onChange(of: openTodayWoolG) { _, wool in
+            if wool == 0 { resetTier() }
+        }
+    }
+
+    // MARK: - Tier state
+
+    /// 進畫面時把 tier 對回持久化的次數。
+    /// 跨日、或這個工作日還沒發過羊毛（含剛收割完新開的那筆）都歸零。
+    private func syncTier() {
+        if storedDay != todayKey {
+            storedDay = todayKey
+            storedCount = 0
+        }
+        if openTodayWoolG == 0 {
+            storedCount = 0
+        }
+
+        tier = min(storedCount, Self.maxTier)
+    }
+
+    /// 每收到一次 .woolGained 就升一階（上限 3）
+    private func registerGrant() {
+        if storedDay != todayKey {          // 跨日的第一次發放
+            storedDay = todayKey
+            storedCount = 0
+        }
+
+        storedCount += 1
+        let newTier = min(storedCount, Self.maxTier)
+        guard newTier != tier else { return }
+
+        withAnimation(.easeInOut(duration: 0.40)) {
+            tier = newTier
+        }
+    }
+
+    private func resetTier() {
+        storedCount = 0
+        withAnimation(.easeInOut(duration: 0.40)) {
+            tier = 0
+        }
     }
 
     // MARK: - Artwork
 
-    /// Uses `alpaca_0…3` from the asset catalogue once B's art lands; until then a
-    /// placeholder that still visibly fluffs up, so the animation is demoable today.
+    /// 用資產目錄裡的 alpaca_0…3；圖還沒進來時退回一個看得出變化的 placeholder。
     @ViewBuilder
     private var alpaca: some View {
         if let artwork = Self.artworkName(for: tier) {
@@ -78,7 +147,7 @@ struct AlpacaStatusView: View {
     }
 
     private static func artworkName(for tier: Int) -> String? {
-        let name = "alpaca_\(tier)"
+        let name = "alpaca_\(min(max(tier, 0), maxTier))"
         #if canImport(UIKit)
         return UIImage(named: name) == nil ? nil : name
         #else
