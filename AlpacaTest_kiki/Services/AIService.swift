@@ -45,7 +45,8 @@ struct HistoricalTaskSummary: Codable {
 enum AIConfig {
     /// 先跑 apitest.swift 確認你的帳號有哪個模型，再改這裡（改原始碼重 build，不做執行期切換）
     static let model = "gpt-5-mini"
-    static let endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
+    /// var 而非 let：測試要能指向壞掉的位址驗證降級行為
+    static var endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
 }
 
 enum AIServiceError: LocalizedError {
@@ -83,6 +84,15 @@ final class AIService {
     /// 現場網路掛掉時：手動設成 true 即可完整離線 demo。
     var useMock = Secrets.openAIKey.isEmpty
 
+    /// Demo 保命：真 API 掛掉（斷網／429／key 失效）時，不把錯誤丟到使用者面前，
+    /// 直接改用罐頭回應讓流程走完。開發時看 console 的 ⚠️ 就知道有降級。
+    /// 設成 false 可讓錯誤照常拋出（想除錯 API 問題時用）。
+    var fallbackToMockOnFailure = true
+
+    private func degrade(_ error: Error, _ what: String) {
+        print("⚠️ AI \(what) 失敗，改用罐頭回應：\(error.localizedDescription)")
+    }
+
     /// 卡關聊天。round 由呼叫端算（該 session 的 user 訊息數 + 1；R1 = AI 開場）
     /// Round 8：呼叫端鎖輸入（STK-02H）；safety 觸發不受 8 輪限制
     func stuckChat(task: TodoTask, round: Int,
@@ -109,8 +119,14 @@ final class AIService {
             apiMessages += messages.map { ["role": $0.role, "content": $0.content] }
         }
 
-        let raw = try await callChat(apiMessages, wantJSON: true)
-        return Self.decodeStuckReply(raw)
+        do {
+            let raw = try await callChat(apiMessages, wantJSON: true)
+            return Self.decodeStuckReply(raw)
+        } catch {
+            guard fallbackToMockOnFailure else { throw error }
+            degrade(error, "卡關聊天")
+            return Self.mockStuckReply(round: round, task: task)
+        }
     }
 
     /// 拆分建議：2–5 個子任務名稱（SPL-01）
@@ -128,15 +144,21 @@ final class AIService {
                 .joined(separator: "\n")
             user += "\n\n以下是使用者剛才的卡關對話，拆分要對症下藥：\n\(transcript)"
         }
-        let raw = try await callChat([
-            ["role": "system", "content": PromptBuilder.splitSystem()],
-            ["role": "user", "content": user]
-        ], wantJSON: true)
-        let names = Self.decodeSubtasks(raw)
-        guard names.count >= 2 else {
-            return ["把「\(task.name)」列出具體步驟", "先做最小的第一步（10 分鐘）"]
+        do {
+            let raw = try await callChat([
+                ["role": "system", "content": PromptBuilder.splitSystem()],
+                ["role": "user", "content": user]
+            ], wantJSON: true)
+            let names = Self.decodeSubtasks(raw)
+            guard names.count >= 2 else {
+                return ["把「\(task.name)」列出具體步驟", "先做最小的第一步（10 分鐘）"]
+            }
+            return Array(names.prefix(5))
+        } catch {
+            guard fallbackToMockOnFailure else { throw error }
+            degrade(error, "拆分建議")
+            return ["列出\(task.name)的三個小步驟", "先做 10 分鐘暖身", "完成第一個小段落"]
         }
-        return Array(names.prefix(5))
     }
 
     /// 離開時的不可編輯 Summary（STK-04）
@@ -148,11 +170,17 @@ final class AIService {
         let transcript = messages
             .map { "\($0.role == "user" ? "使用者" : "AI")：\($0.content)" }
             .joined(separator: "\n")
-        let raw = try await callChat([
-            ["role": "system", "content": PromptBuilder.summarySystem()],
-            ["role": "user", "content": transcript]
-        ], wantJSON: false)
-        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            let raw = try await callChat([
+                ["role": "system", "content": PromptBuilder.summarySystem()],
+                ["role": "user", "content": transcript]
+            ], wantJSON: false)
+            return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            guard fallbackToMockOnFailure else { throw error }
+            degrade(error, "對話摘要")
+            return "今天聊到你在這個任務上的卡點，主要是不知道從哪裡開始。我們一起找到了一個可以先動手的小步驟。累了就休息，明天再繼續就好。"
+        }
     }
 
     // MARK: - OpenAI 呼叫（含 429/5xx 退避重試 ×2：1s/3s）
