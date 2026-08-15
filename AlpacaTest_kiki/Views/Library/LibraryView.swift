@@ -2,21 +2,29 @@
 //  LibraryView.swift
 //  AlpacaTest_kiki
 //
-//  任務庫 by-category（LIB-C01 / LIB-C03）。Owned by A.
-//  第一版純瀏覽：分類方格 → 分類頁（依子分類分組）→ 點任務開共用編輯器。
+//  任務庫。Owned by A. 兩種瀏覽方式用上方的 segmented 切換：
+//    分類（LIB-C01 / LIB-C03，本檔）／時間（LIB-T01 / T02，LibraryCalendarView）
+//  純瀏覽：分類方格 → 分類頁（依子分類分組）→ 點任務開共用編輯器。
 //
-//  ★ 未排日期區是這一版最重要的部分：startDate == nil 的任務在
-//    今日頁（只查當天）看不到，在這之前等於整個 App 裡都不存在。
+//  ★ 未排日期區只放在「時間」模式（LibraryCalendarView）：startDate == nil 的
+//    任務在今日頁（只查當天）看不到，在任務庫出現之前等於整個 App 裡都不存在。
 //
-//  刻意不做：拖拉、清單編輯模式、分類 CRUD、by-time 日曆（LIB-T）。
+//  刻意不做：拖拉、清單編輯模式、分類 CRUD。
 //
 
 import SwiftUI
 import SwiftData
 
 struct LibraryView: View {
+    /// 任務庫的兩種瀏覽方式：依分類（LIB-C）／依時間（LIB-T）
+    private enum LibraryMode: String, CaseIterable {
+        case category = "分類"
+        case time     = "時間"
+    }
+
     @Query(sort: \TodoTask.sortOrder) private var allTasks: [TodoTask]
 
+    @State private var mode: LibraryMode = .category
     @State private var editingTask: TodoTask?
 
     private let columns = [
@@ -53,20 +61,23 @@ struct LibraryView: View {
             }
     }
 
-    private var urgentUnscheduled: [TodoTask] {
-        visibleTasks.filter { $0.startDate == nil && $0.isUrgent }
-    }
-
-    private var laterUnscheduled: [TodoTask] {
-        visibleTasks.filter { $0.startDate == nil && !$0.isUrgent }
-    }
-
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    categorySection
-                    unscheduledSection
+                    Picker("瀏覽方式", selection: $mode) {
+                        ForEach(LibraryMode.allCases, id: \.self) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    switch mode {
+                    case .category:
+                        categorySection
+                    case .time:
+                        LibraryCalendarView()
+                    }
                 }
                 .padding(.horizontal)
                 .padding(.top, 8)
@@ -76,9 +87,6 @@ struct LibraryView: View {
             .navigationTitle("任務庫")
             .navigationDestination(for: CategoryBucket.self) { bucket in
                 CategoryTasksView(category: bucket.category, accent: bucket.color)
-            }
-            .navigationDestination(for: UnscheduledGroup.self) { group in
-                UnscheduledTasksView(group: group)
             }
         }
         .sheet(item: $editingTask) { task in
@@ -105,26 +113,6 @@ struct LibraryView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                }
-            }
-        }
-    }
-
-    // MARK: - 未排日期（這一版的重點）
-
-    @ViewBuilder
-    private var unscheduledSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("未排日期")
-                .font(Theme.sectionTitleFont)
-                .foregroundStyle(Color.alpacaBrown.opacity(0.75))
-
-            if urgentUnscheduled.isEmpty && laterUnscheduled.isEmpty {
-                emptyHint("目前每個任務都有日期")
-            } else {
-                VStack(spacing: 10) {
-                    UnscheduledRow(group: .urgent, count: urgentUnscheduled.count)
-                    UnscheduledRow(group: .later, count: laterUnscheduled.count)
                 }
             }
         }
@@ -219,43 +207,6 @@ private struct CategoryCard: View {
             RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
                 .stroke(bucket.color.opacity(0.45), lineWidth: 1.5)
         )
-    }
-}
-
-private struct UnscheduledRow: View {
-    let group: UnscheduledGroup
-    let count: Int
-
-    var body: some View {
-        NavigationLink(value: group) {
-            HStack(spacing: 12) {
-                Image(systemName: group.icon)
-                    .foregroundStyle(group == .urgent ? Color.alpacaStuck : Color.alpacaBrown.opacity(0.5))
-
-                Text(group.title)
-                    .font(.alpacaBody)
-                    .foregroundStyle(Color.alpacaBrown)
-
-                Spacer()
-
-                Text("\(count)")
-                    .font(.alpacaCaption)
-                    .foregroundStyle(.secondary)
-
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.alpacaBrown.opacity(0.4))
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.smallRadius, style: .continuous)
-                    .fill(Color.white.opacity(0.9))
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(count == 0)
-        .opacity(count == 0 ? 0.5 : 1)
     }
 }
 
