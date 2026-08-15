@@ -19,6 +19,9 @@ struct TaskEditorView: View {
     /// nil = 建立新任務；非 nil = 編輯這一筆
     private let task: TodoTask?
 
+    /// 建立成功後通知呼叫端（AI 流程用來把整條 sheet 收掉）。取消不會呼叫。
+    private let onSaved: (() -> Void)?
+
     /// TSK-02 的三種日期狀態。對應 Models 的規則：
     /// startDate 有值 = 已排程；nil + isUrgent = 未排但緊急；nil + !isUrgent = 未排不緊急。
     private enum DateState: Int, CaseIterable {
@@ -51,24 +54,67 @@ struct TaskEditorView: View {
 
     private let complexityLabels = ["簡單", "中等", "困難"]
 
-    init(task: TodoTask? = nil) {
+    /// 建立（task: nil）或編輯（task: 既有任務）
+    init(task: TodoTask? = nil, onSaved: (() -> Void)? = nil) {
+        self.init(
+            task: task,
+            onSaved: onSaved,
+            name: task?.name ?? "",
+            note: task?.note,
+            category: task?.category,
+            startDate: task?.startDate,
+            isUrgent: task?.isUrgent ?? false,
+            isMustToday: task?.isMustToday ?? false,
+            complexity: task?.complexity ?? 0,
+            hasExplicitDate: task == nil ? true : (task?.startDate != nil)
+        )
+    }
+
+    /// AI 解析結果的入口：帶的是「值」不是已經 insert 的物件。
+    /// 一樣是建立模式 —— 使用者按下「建立任務」之前不會有任何東西寫進資料庫。
+    init(prefill: ParsedTask, onSaved: (() -> Void)? = nil) {
+        self.init(
+            task: nil,
+            onSaved: onSaved,
+            name: prefill.name,
+            note: prefill.note,
+            category: prefill.category,
+            startDate: prefill.startDate,
+            isUrgent: prefill.isUrgent,
+            isMustToday: prefill.isMustToday,
+            complexity: prefill.complexity,
+            hasExplicitDate: prefill.startDate != nil
+        )
+    }
+
+    private init(task: TodoTask?,
+                 onSaved: (() -> Void)?,
+                 name: String,
+                 note: String?,
+                 category: String?,
+                 startDate: Date?,
+                 isUrgent: Bool,
+                 isMustToday: Bool,
+                 complexity: Int,
+                 hasExplicitDate: Bool) {
         self.task = task
+        self.onSaved = onSaved
 
-        _category    = State(initialValue: task?.category)
-        _name        = State(initialValue: task?.name ?? "")
-        _note        = State(initialValue: task?.note ?? "")
-        _isMustToday = State(initialValue: task?.isMustToday ?? false)
-        _complexity  = State(initialValue: task?.complexity ?? 0)
-        _startDate   = State(initialValue: task?.startDate ?? Calendar.current.startOfDay(for: .now))
+        _name        = State(initialValue: name)
+        _note        = State(initialValue: note ?? "")
+        _category    = State(initialValue: category)
+        _isMustToday = State(initialValue: isMustToday)
+        _complexity  = State(initialValue: complexity)
+        _startDate   = State(initialValue: startDate ?? Calendar.current.startOfDay(for: .now))
 
-        // 從既有任務反推日期狀態；建立模式預設「指定日期（今天）」
+        // 三種日期狀態（TSK-02）：有日期 = 指定日期；沒日期看 isUrgent 分兩種
         let resolvedDateState: DateState
-        if let task {
-            if task.startDate != nil    { resolvedDateState = .scheduled }
-            else if task.isUrgent       { resolvedDateState = .unscheduledUrgent }
-            else                        { resolvedDateState = .unscheduledLater }
-        } else {
+        if hasExplicitDate {
             resolvedDateState = .scheduled
+        } else if isUrgent {
+            resolvedDateState = .unscheduledUrgent
+        } else {
+            resolvedDateState = .unscheduledLater
         }
         _dateState = State(initialValue: resolvedDateState)
     }
@@ -86,9 +132,12 @@ struct TaskEditorView: View {
     // MARK: - 分類（TSK-03）
 
     /// 所有任務用過的分類，去重排序。沒有分類資料表，這就是唯一來源。
+    /// 目前選到的分類一定要在清單裡，否則 Picker 找不到對應 tag 會顯示空白 ——
+    /// 剛用「＋新增分類」建的、或 AI 帶進來的分類都還沒存進任何任務。
     private var availableCategories: [String] {
-        Set(allTasks.compactMap { $0.category })
-            .sorted { $0.localizedCompare($1) == .orderedAscending }
+        var names = Set(allTasks.compactMap { $0.category })
+        if let category { names.insert(category) }
+        return names.sorted { $0.localizedCompare($1) == .orderedAscending }
     }
 
     private var trimmedNewCategory: String {
@@ -262,6 +311,7 @@ struct TaskEditorView: View {
         }
 
         try? modelContext.save()
+        onSaved?()
         dismiss()
     }
 }
