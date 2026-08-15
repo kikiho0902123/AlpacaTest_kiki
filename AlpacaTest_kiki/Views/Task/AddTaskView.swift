@@ -49,6 +49,9 @@ struct AddTaskView: View {
                         let newTask = TodoTask(name: name)
                         newTask.isMustToday = isMustToday
                         newTask.complexity = complexity
+                        // TodayView 只查詢今天的任務；沒有日期的任務不會出現在首頁。
+                        // Step 3 的 TaskEditorView 會換成 TSK-02 的三種日期狀態選擇。
+                        newTask.startDate = Calendar.current.startOfDay(for: .now)
                         modelContext.insert(newTask)
                         dismiss()
                     }
