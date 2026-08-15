@@ -232,9 +232,9 @@ enum AIConfig {
     /// gpt-5 系列的思考量。minimal ＝幾乎不思考，會忽略 prompt 裡的字數自我檢查，
     /// 實測話變超長又抓不到重點；low 慢約 1–2 秒但守規則，聊天室用這個。
     static let reasoningEffort = "low"
-    /// gpt-5 系列的話多程度（low/medium/high）。聊天泡泡固定 low，
-    /// 這是「字數」最直接的旋鈕，比 prompt 裡寫「100 字」有效得多。
-    static let chatVerbosity = "low"
+    /// gpt-5 系列的話多程度（low/medium/high）。low 實測讓聊天泡泡中位數只剩約 54 字，
+    /// 改用 medium；Prompt 的每輪字數上限與 150 字程式保險絲仍會防止回覆失控。
+    static let chatVerbosity = "medium"
     /// 「不需要思考」那檔的名字會隨模型世代改：gpt-5.0 家族叫 minimal，
     /// 5.1 之後改名叫 none，送錯的那個會直接 400（不是降級，是整包失敗）。
     /// R1 開場用得到這檔。

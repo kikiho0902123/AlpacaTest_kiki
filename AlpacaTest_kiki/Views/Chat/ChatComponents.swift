@@ -185,7 +185,7 @@ struct ChipsRow: View {
     }
 }
 
-// MARK: - 輕量選項列（R2+：「很接近／有一部分對／…」，點了直接送出）
+// MARK: - 輕量選項列（R2+：「很接近／有一部分對／…」，點了帶入輸入框）
 
 struct QuickOptionsRow: View {
     let options: [String]

@@ -183,10 +183,10 @@ struct StuckChatView: View {
                 .tint(ChatTheme.brown)
             }
 
-            // R2+ 輕量選項（點了直接送出）
+            // R2+ 輕量選項：和 R1 一致，先帶入輸入框，讓使用者確認或補字後再送出。
             if let opts = currentReply?.quickOptions, !opts.isEmpty,
                userCount > 0, !isLocked, !isLoading {
-                QuickOptionsRow(options: opts) { send($0) }
+                QuickOptionsRow(options: opts) { inputText = $0 }
             }
 
             // R1 卡點 chips（預設寫死；AI 有給就用 AI 的）

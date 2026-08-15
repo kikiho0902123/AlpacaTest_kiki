@@ -54,6 +54,10 @@ struct StuckReply: Codable {
 }
 ```
 
+聊天 `text` 的 Prompt 硬性上限是 **130 字**；需要提供協助／收尾的輪次另用較短預算：
+R3 110 字、R5 100 字、R6–R7 90 字、R8 110 字。程式端的 150 字保險絲不變，只有模型
+違反 Prompt 時才會介入。離開聊天室後的 Summary 是另一條管線，仍維持 100–150 字。
+
 ### ContextAnalysis（設計師 02｜Context Analysis Engine）
 
 **A/B 不需要碰這個**，它是 C 內部三個 AI 呼叫之間的共用判讀。列在這裡是因為它現在出現在
@@ -198,6 +202,7 @@ SwiftUI 的 `Text` **只對字串常數解析 Markdown**，變數不會生效，
 ## 7. 輪次規則（呼叫端不用管，寫給看 code 的人）
 
 - `round = 該 session 使用者訊息數 + 1`；R1 = AI 開場（0 則使用者訊息）。
+- R2+ 的 `quickOptions` 點擊後只帶入輸入框，不會自動送出；使用者可補字或確認後再按送出。
 - 第 7 則使用者訊息的回覆 = Round 8 Final Closure → 鎖輸入＋休息 15 分鐘提示。
 - **R5–R8 各有不同的收束強度**（設計師 04），不是同一段指令重複四次。
 - `readyToClose = true` 時 UI 會多出一顆「這次先到這裡」，讓使用者不必硬撐到 R8。
@@ -301,7 +306,7 @@ cp Secrets.example.swift Secrets.swift
 |---|---|---|
 | `model` | `gpt-5.5` | 實測比 gpt-5-mini 快一倍且更準（見 `AIConfig` 註解） |
 | `reasoningEffort` | `low` | `minimal` 會忽略字數自檢，話變超長 |
-| `chatVerbosity` | `low` | 聊天泡泡要短；摘要／週回饋另外用 `medium` |
+| `chatVerbosity` | `medium` | `low` 實測中位數僅約 54 字；Prompt 上限與 150 字保險絲仍會控制長度 |
 | `serviceTier` | `priority` | 實測沒有明顯變快，留著是防 demo 當天 API 壅塞 |
 
 > ⚠️ `reasoning_effort` 的最低檔在 gpt-5.0 家族叫 `minimal`、5.1 之後改叫 `none`，
