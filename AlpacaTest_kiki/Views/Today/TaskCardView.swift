@@ -96,10 +96,6 @@ struct TaskCardView: View {
     }
 
     private func complete() {
-        // TODO(Phase 3): route through B's CompletionView instead of completing directly.
-        task.status = "done"
-        task.progress = 1.0
-        RewardEngine.grant(.complete(task.complexity), context: modelContext)
         NotificationCenter.default.post(name: .taskCompleted, object: task.id)
     }
 }

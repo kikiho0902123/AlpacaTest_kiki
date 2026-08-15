@@ -26,9 +26,9 @@ struct ContentView: View {
                     Label("回饋", systemImage: "chart.bar.fill")
                 }
 
-            SettingsView()
+            MyHomeView()
                 .tabItem {
-                    Label("個人化設定", systemImage: "person.crop.circle.fill")
+                    Label("My Home", systemImage: "house.fill")
                 }
         }
         .tint(.alpacaTerracotta)

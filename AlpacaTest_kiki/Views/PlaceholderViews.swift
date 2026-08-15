@@ -29,27 +29,6 @@ struct TaskLibraryView: View {
     }
 }
 
-// 回饋 - 之後再開發
-struct FeedbackView: View {
-    var body: some View {
-        NavigationStack {
-            VStack {
-                Spacer()
-                Image(systemName: "chart.bar.fill")
-                    .font(.system(size: 44))
-                    .foregroundStyle(Color.alpacaOrange.opacity(0.6))
-                Text("回饋\n（開發中）")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 8)
-                Spacer()
-            }
-            .frame(maxWidth: .infinity)
-            .background(Color.alpacaCream.ignoresSafeArea())
-            .navigationTitle("回饋")
-        }
-    }
-}
 
 // 個人化設定 - 之後再開發
 struct SettingsView: View {
@@ -74,5 +53,4 @@ struct SettingsView: View {
 }
 
 #Preview("任務庫") { TaskLibraryView() }
-#Preview("回饋") { FeedbackView() }
 #Preview("個人化設定") { SettingsView() }

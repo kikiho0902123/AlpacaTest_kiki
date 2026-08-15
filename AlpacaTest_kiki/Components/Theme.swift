@@ -7,16 +7,16 @@
 
 import SwiftUI
 
-// MARK: - 溫暖羊駝主題色系
+// MARK: - Soft illustrated productivity theme
 
 extension Color {
-    static let alpacaCream       = Color(red: 0.98, green: 0.93, blue: 0.85) // 背景奶油色
-    static let alpacaBeige       = Color(red: 0.94, green: 0.85, blue: 0.72) // 卡片邊框米色
-    static let alpacaBrown       = Color(red: 0.45, green: 0.32, blue: 0.22) // 主要文字深咖啡色
-    static let alpacaTerracotta  = Color(red: 0.85, green: 0.45, blue: 0.28) // 主色調赤陶橘
-    static let alpacaOrange      = Color(red: 0.93, green: 0.58, blue: 0.30) // 強調橘
-    static let alpacaStuck       = Color(red: 0.86, green: 0.35, blue: 0.30) // 卡住了警示紅橘
-    static let alpacaGreen       = Color(red: 0.55, green: 0.68, blue: 0.45) // 完成綠
+    static let alpacaCream       = Theme.background
+    static let alpacaBeige       = Theme.surfaceMint
+    static let alpacaBrown       = Theme.primaryText
+    static let alpacaTerracotta  = Theme.primary
+    static let alpacaOrange      = Theme.surfaceLeaf
+    static let alpacaStuck       = Theme.surfaceLavender
+    static let alpacaGreen       = Theme.surfaceLeaf
 }
 
 // MARK: - Type scale
@@ -29,8 +29,36 @@ extension Font {
 }
 
 enum Theme {
-    static let cardCornerRadius: CGFloat = 20
-    static let modalCornerRadius: CGFloat = 24
+    static let background = Color(red: 0.945, green: 0.965, blue: 0.961)       // #F1F6F5
+    static let primary = Color(red: 0.541, green: 0.808, blue: 0.780)          // #8ACEC7
+    static let surfaceMint = Color(red: 0.753, green: 0.890, blue: 0.878)      // #C0E3E0
+    static let surfaceLavender = Color(red: 0.729, green: 0.718, blue: 0.804)  // #BAB7CD
+    static let surfaceLeaf = Color(red: 0.757, green: 0.816, blue: 0.561)      // #C1D08F
+    static let highlight = Color(red: 0.702, green: 0.914, blue: 0.031)        // #B3E908
+    static let primaryText = Color(red: 0.184, green: 0.216, blue: 0.208)      // #2F3735
+    static let secondaryText = Color(red: 0.384, green: 0.424, blue: 0.412)    // #626C69
+    static let tertiaryText = Color(red: 0.573, green: 0.608, blue: 0.596)     // #929B98
+
+    static let cardCornerRadius: CGFloat = 28
+    static let cardRadius: CGFloat = 28
+    static let smallRadius: CGFloat = 18
+    static let modalCornerRadius: CGFloat = 28
+    static let sectionTitleFont = Font.system(.headline, design: .rounded).weight(.semibold)
+}
+
+extension View {
+    func softFeedbackCard(surface: Color = .white.opacity(0.62)) -> some View {
+        self
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                    .fill(surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                    .stroke(.white.opacity(0.72), lineWidth: 1)
+            )
+            .shadow(color: Theme.primaryText.opacity(0.05), radius: 10, x: 0, y: 5)
+    }
 }
 
 // MARK: - Modal template (COM-06)
@@ -60,25 +88,25 @@ struct ConfirmModal: View {
 
             Text(message)
                 .font(.alpacaBody)
-                .foregroundStyle(Color.alpacaBrown.opacity(0.8))
+                .foregroundStyle(Theme.secondaryText)
                 .multilineTextAlignment(.center)
 
             VStack(spacing: 10) {
                 Button(action: primary.action) {
                     Text(primary.title)
                         .font(.alpacaHeading)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.primaryText)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(primary.isDestructive ? Color.alpacaStuck : Color.alpacaTerracotta)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .background(primary.isDestructive ? Theme.surfaceLavender : Theme.primary)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.smallRadius, style: .continuous))
                 }
 
                 if let secondary {
                     Button(action: secondary.action) {
                         Text(secondary.title)
                             .font(.alpacaBody)
-                            .foregroundStyle(Color.alpacaBrown.opacity(0.7))
+                            .foregroundStyle(Theme.secondaryText)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
                     }
