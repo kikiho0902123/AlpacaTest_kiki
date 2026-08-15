@@ -137,6 +137,82 @@ struct HistoricalTaskSummary: Codable {
     var score: Int
 }
 
+/// 一週的原始素材（B 的回饋頁用）。刻意不吃 B 的 private WeeklyFeedbackData，
+/// 而是吃 A 的 model 陣列 —— B 手上已經有這三包，呼叫時不用組任何東西。
+///
+/// 為什麼要 tasks：設計師規格的第一項分析是「本週較常卡關的任務**分類**」，
+/// 而分類長在 TodoTask 上，TaskLog 只有 taskID。沒有 tasks 就分析不了分類。
+struct WeeklyStats {
+    var startDate: Date
+    var endDate: Date
+    var stats: [DailyStat]
+    var logs: [TaskLog]
+    var tasks: [TodoTask] = []
+
+    var totalWool: Int  { stats.reduce(0) { $0 + $1.woolG } }
+    var doneCount: Int  { stats.reduce(0) { $0 + $1.doneCount } }
+    var startCount: Int { stats.reduce(0) { $0 + $1.startCount } }
+    var stuckCount: Int { stats.reduce(0) { $0 + $1.stuckCount } }
+    var closedDays: Int { stats.filter(\.isClosed).count }
+
+    /// 這週完全沒有活動 —— 不值得叫 AI 生一段「你這週很棒」的空話，也不該花一次 API
+    var isBarren: Bool { doneCount == 0 && startCount == 0 && stuckCount == 0 && logs.isEmpty }
+
+    /// 餵給模型的素材。
+    /// 數字與分類、時段都先在程式端算好：規格要求「不自行補充不存在的事實」，
+    /// 讓模型自己從一堆時間戳推「他常在晚上卡住」很容易推錯。
+    var digest: String {
+        var s = "期間：\(Self.fmt(startDate)) – \(Self.fmt(endDate))\n"
+        s += "完成 \(doneCount) 件｜開始 \(startCount) 件｜用了卡關解套 \(stuckCount) 次"
+        s += "｜羊毛 \(totalWool)g｜有結算的天數 \(closedDays)/7\n"
+
+        let daily = stats.sorted { $0.date < $1.date }.map {
+            "\(Self.fmt($0.date))(\(Self.weekday($0.date)))：完成\($0.doneCount)、卡關\($0.stuckCount)、\($0.woolG)g"
+        }
+        if !daily.isEmpty { s += "逐日：\n" + daily.joined(separator: "\n") + "\n" }
+
+        // 卡關集中在哪個分類／時段（規格第 1 項分析的素材）
+        let stuckLogs = logs.filter { $0.type == "chatSummary" }
+        if !stuckLogs.isEmpty {
+            let byCategory = Dictionary(grouping: stuckLogs) { log in
+                tasks.first { $0.id == log.taskID }?.category ?? "未分類"
+            }.map { "\($0.key) \($0.value.count) 次" }.sorted()
+            let bySlot = Dictionary(grouping: stuckLogs) { Self.slot($0.timestamp) }
+                .map { "\($0.key) \($0.value.count) 次" }.sorted()
+            s += "\n卡關發生在哪些分類：\(byCategory.joined(separator: "、"))\n"
+            s += "卡關發生在哪些時段：\(bySlot.joined(separator: "、"))\n"
+            s += "（注意：次數 1 的項目是單一事件，不得稱為「模式」）\n"
+        }
+
+        let notes = logs.filter { $0.type == "completion" }.map(\.content).filter { !$0.isEmpty }
+        if !notes.isEmpty {
+            s += "\n他完成任務時自己寫的話：\n" + notes.prefix(8).map { "・\($0)" }.joined(separator: "\n") + "\n"
+        }
+        let chats = stuckLogs.map(\.content).filter { !$0.isEmpty }
+        if !chats.isEmpty {
+            s += "\n這週卡關對話的紀錄（找出哪些做法真的讓他重新推進）：\n"
+                + chats.prefix(5).map { "・\($0)" }.joined(separator: "\n") + "\n"
+        }
+        return s
+    }
+
+    private static func fmt(_ d: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "M/d"; return f.string(from: d)
+    }
+    private static func weekday(_ d: Date) -> String {
+        let names = ["日", "一", "二", "三", "四", "五", "六"]
+        return "週" + names[Calendar.current.component(.weekday, from: d) - 1]
+    }
+    private static func slot(_ d: Date) -> String {
+        switch Calendar.current.component(.hour, from: d) {
+        case 5..<12:  "早上"
+        case 12..<18: "下午"
+        case 18..<23: "晚上"
+        default:      "深夜"
+        }
+    }
+}
+
 // MARK: - 設定
 
 enum AIConfig {
@@ -336,6 +412,57 @@ final class AIService {
             degrade(error, "對話摘要")
             return "今天聊到你在這個任務上的卡點，主要是不知道從哪裡開始。我們一起找到了一個可以先動手的小步驟。累了就休息，明天再繼續就好。"
         }
+    }
+
+    /// 週回饋文字（給 B 的 FeedbackView 歷史週次區塊用，TEAM_PLAN Batch 3）
+    ///
+    /// 回傳 nil ＝這週沒有任何活動，呼叫端不要顯示 AI 區塊（也不會打 API）。
+    ///
+    /// **快取是必要的不是最佳化**：回饋頁一次渲染 12 週，每次 `.task` 都打一次
+    /// 就是 12 次 API＋12 份費用，而且捲上捲下會重打。同一週在同一次啟動內只算一次。
+    func weeklyFeedback(_ week: WeeklyStats) async throws -> String? {
+        guard !week.isBarren else { return nil }
+
+        let key = Calendar.current.startOfDay(for: week.startDate)
+        if let cached = weeklyCache[key] { return cached }
+
+        if useMock {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            let text = Self.weeklyFallback(week)
+            weeklyCache[key] = text
+            return text
+        }
+
+        do {
+            let raw = try await callChat([
+                ["role": "system", "content": PromptBuilder.weeklySystem()],
+                ["role": "user", "content": week.digest]
+            ], wantJSON: false, verbosity: "medium")   // 規格要約 200 字，low 會只吐兩句
+            let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            weeklyCache[key] = text
+            return text
+        } catch {
+            guard fallbackToMockOnFailure else { throw error }
+            degrade(error, "週回饋")
+            return Self.weeklyFallback(week)
+        }
+    }
+
+    /// 週回饋快取。key = 該週第一天（startOfDay）。只活在記憶體，重開 App 會重算。
+    private var weeklyCache: [Date: String] = [:]
+
+    /// 離線／降級版。維持規格的三段結構，數字全部來自本地統計 —— 不編造，也不說「模式」。
+    nonisolated static func weeklyFallback(_ week: WeeklyStats) -> String {
+        var s = week.doneCount > 0
+            ? "這週你完成了 \(week.doneCount) 件事，這是真的有在往前走。\n\n"
+            : "這週雖然沒有完成的紀錄，你還是有打開它、看過它。\n\n"
+        s += "### 這週的卡關時刻\n"
+        s += week.stuckCount > 0
+            ? "你用了 \(week.stuckCount) 次卡關解套。卡住之後願意去找方法，本身就是一種推進。\n\n"
+            : "這週沒有留下卡關的紀錄。\n\n"
+        s += "### 給這週的你\n"
+        s += "累積了 \(week.totalWool)g 羊毛。下週不用加碼，維持現在的節奏就好。"
+        return s
     }
 
     // MARK: - OpenAI 呼叫（含 429/5xx 退避重試 ×2：1s/3s）
