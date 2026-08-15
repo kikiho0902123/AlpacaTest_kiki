@@ -20,6 +20,7 @@ struct AITaskCreationView: View {
     @State private var phase: Phase = .editing
     @State private var batchDraft: BatchDraft?
     @State private var manualDraft: ManualDraft?
+    @FocusState private var isInputFocused: Bool
 
     private enum Phase: Equatable {
         case editing
@@ -47,13 +48,18 @@ struct AITaskCreationView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.alpacaCream.ignoresSafeArea()
+                Color.alpacaCream
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture { isInputFocused = false }
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         Text("用一段話描述你想做的事，AI 會幫你整理成一個或多個任務。")
                             .font(.alpacaBody)
                             .foregroundStyle(Color.alpacaBrown.opacity(0.8))
+                            .contentShape(Rectangle())
+                            .onTapGesture { isInputFocused = false }
 
                         inputField
 
@@ -67,6 +73,7 @@ struct AITaskCreationView: View {
                     }
                     .padding(20)
                 }
+                .scrollDismissesKeyboard(.interactively)
             }
             .navigationTitle("AI 幫你建立")
             .navigationBarTitleDisplayMode(.inline)
@@ -74,6 +81,10 @@ struct AITaskCreationView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
                         .disabled(isParsing)
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("完成") { isInputFocused = false }
                 }
             }
         }
@@ -97,23 +108,38 @@ struct AITaskCreationView: View {
             Text("任務描述")
                 .font(Theme.sectionTitleFont)
                 .foregroundStyle(Color.alpacaBrown.opacity(0.75))
+                .contentShape(Rectangle())
+                .onTapGesture { isInputFocused = false }
 
-            TextField("例如：明天買菜，下週三交經濟學報告",
-                      text: $input,
-                      axis: .vertical)
-                .lineLimit(4...8)
-                .textFieldStyle(.plain)
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: Theme.smallRadius, style: .continuous)
-                        .fill(.white.opacity(0.9))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.smallRadius, style: .continuous)
-                        .stroke(Color.alpacaBeige, lineWidth: 1.2)
-                )
-                .disabled(isParsing)          // 解析中不給改，但文字照樣看得到
-                .opacity(isParsing ? 0.6 : 1)
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $input)
+                    .focused($isInputFocused)
+                    .font(.alpacaBody)
+                    .foregroundStyle(Color.alpacaBrown)
+                    .scrollContentBackground(.hidden)
+                    .padding(10)
+
+                if input.isEmpty {
+                    Text("例如：明天買菜，下週三交經濟學報告")
+                        .font(.alpacaBody)
+                        .foregroundStyle(Theme.tertiaryText)
+                        .padding(.horizontal, 15)
+                        .padding(.vertical, 18)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(minHeight: 120, maxHeight: 180)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.smallRadius, style: .continuous)
+                    .fill(.white.opacity(0.9))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.smallRadius, style: .continuous)
+                    .stroke(Color.alpacaBeige, lineWidth: 1.2)
+                    .allowsHitTesting(false)
+            )
+            .disabled(isParsing)          // 解析中不給改，但文字照樣看得到
+            .opacity(isParsing ? 0.6 : 1)
         }
     }
 

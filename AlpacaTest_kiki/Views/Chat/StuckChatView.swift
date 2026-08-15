@@ -32,6 +32,7 @@ struct StuckChatView: View {
     @State private var summaryText: String?
     @State private var showNoHelp = false
     @State private var noHelpText = ""
+    @FocusState private var isInputFocused: Bool
     /// onAppear 會重複觸發，用旗標確保 R1 只發一次
     @State private var didOpen = false
 
@@ -144,6 +145,12 @@ struct StuckChatView: View {
                 }
                 .padding()
             }
+            .scrollDismissesKeyboard(.interactively)
+            .background(
+                ChatTheme.cream
+                    .contentShape(Rectangle())
+                    .onTapGesture { isInputFocused = false }
+            )
             .onChange(of: thread.count) {
                 withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
             }
@@ -206,6 +213,7 @@ struct StuckChatView: View {
                 TextField(isLocked ? "AI 休息中…" : "輸入訊息…", text: $inputText, axis: .vertical)
                     .lineLimit(1...4)
                     .textFieldStyle(.roundedBorder)
+                    .focused($isInputFocused)
                     .disabled(isLocked || isLoading)
                 Button {
                     send(inputText)
@@ -221,7 +229,13 @@ struct StuckChatView: View {
             .padding(.horizontal)
         }
         .padding(.vertical, 10)
-        .background(.thinMaterial)
+        .background(ChatTheme.cream.opacity(0.98))
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Theme.surfaceMint)
+                .frame(height: 1)
+                .allowsHitTesting(false)
+        }
     }
 
     // MARK: - 動作

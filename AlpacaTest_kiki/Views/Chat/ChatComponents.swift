@@ -22,14 +22,14 @@ enum StuckChips {
     }
 }
 
-// MARK: - 聊天室配色（C 私有，不依賴 A 的 Theme；整合後可換成 Theme 的色票）
+// MARK: - 聊天室配色（使用全 App 共用 Theme）
 
 enum ChatTheme {
-    static let cream      = Color(red: 0.98, green: 0.93, blue: 0.85)
-    static let terracotta = Color(red: 0.85, green: 0.45, blue: 0.28)
-    static let brown      = Color(red: 0.45, green: 0.32, blue: 0.22)
-    static let aiBubble   = Color.white
-    static let userBubble = Color(red: 0.93, green: 0.58, blue: 0.30).opacity(0.25)
+    static let cream      = Theme.background
+    static let terracotta = Theme.primary
+    static let brown      = Theme.primaryText
+    static let aiBubble   = Color.white.opacity(0.82)
+    static let userBubble = Theme.surfaceMint.opacity(0.78)
 }
 
 // MARK: - 輕量 Markdown 渲染
@@ -247,7 +247,9 @@ struct SummaryModal: View {
         ZStack {
             Color.black.opacity(0.35).ignoresSafeArea()
             VStack(spacing: 14) {
-                Text("對話記錄").font(.headline)
+                Text("對話記錄")
+                    .font(.alpacaHeading)
+                    .foregroundStyle(Theme.primaryText)
                 ScrollView {
                     MarkdownText(raw: text)
                         .font(.subheadline)
@@ -265,7 +267,11 @@ struct SummaryModal: View {
             }
             .padding(20)
             .frame(maxWidth: 320)
-            .background(RoundedRectangle(cornerRadius: 20).fill(Color(uiColor: .systemBackground)))
+            .background(
+                RoundedRectangle(cornerRadius: Theme.modalCornerRadius)
+                    .fill(Color.alpacaCream)
+            )
+            .shadow(color: Theme.primaryText.opacity(0.12), radius: 20, y: 8)
             .padding(32)
         }
     }
@@ -282,12 +288,15 @@ struct NoHelpFeedbackModal: View {
         ZStack {
             Color.black.opacity(0.35).ignoresSafeArea()
             VStack(spacing: 14) {
-                Text("哪裡沒幫上忙？").font(.headline)
+                Text("哪裡沒幫上忙？")
+                    .font(.alpacaHeading)
+                    .foregroundStyle(Theme.primaryText)
                 Text("告訴我們原因，AI 會慢慢進步")
                     .font(.caption).foregroundStyle(.secondary)
                 TextField("例如：建議太籠統了…", text: $feedbackText, axis: .vertical)
                     .lineLimit(3...5)
                     .textFieldStyle(.roundedBorder)
+                    .tint(Theme.primary)
                 HStack(spacing: 10) {
                     Button("略過", action: onSkip).buttonStyle(.bordered)
                     Button("完成", action: onDone).buttonStyle(.borderedProminent)
@@ -297,7 +306,11 @@ struct NoHelpFeedbackModal: View {
             }
             .padding(20)
             .frame(maxWidth: 320)
-            .background(RoundedRectangle(cornerRadius: 20).fill(Color(uiColor: .systemBackground)))
+            .background(
+                RoundedRectangle(cornerRadius: Theme.modalCornerRadius)
+                    .fill(Color.alpacaCream)
+            )
+            .shadow(color: Theme.primaryText.opacity(0.12), radius: 20, y: 8)
             .padding(32)
         }
     }
