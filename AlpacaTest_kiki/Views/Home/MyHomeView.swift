@@ -27,26 +27,41 @@ struct MyHomeView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    homeHeader
-                    woolBank
-                    textileLibrary
-                    craftingArea
+        ZStack {
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 26) {
+                        // 頁首：右上角保留「使用者頭貼」與「設定齒輪」兩個入口。
+                        homeHeader
+
+                        // HOME-C01：羊毛庫，顯示目前可使用羊毛總量。
+                        woolBank
+
+                        // HOME-C02：織品庫，顯示已成功製作並持有的織品。
+                        textileLibrary
+
+                        // HOME-C03：製作區，消耗羊毛並新增織品。
+                        craftingArea
+                    }
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 22)
                 }
-                .padding(.horizontal, 22)
-                .padding(.vertical, 22)
+                .background(Theme.background.ignoresSafeArea())
+                .navigationTitle("My Home")
+                .navigationBarTitleDisplayMode(.inline)
             }
-            .background(Theme.background.ignoresSafeArea())
-            .navigationTitle("My Home")
-            .navigationBarTitleDisplayMode(.inline)
+
+            if let modalState {
+                Color.black.opacity(0.18)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+
+                modalContent(for: modalState)
+                    .transition(.scale(scale: 0.96).combined(with: .opacity))
+                    .zIndex(1)
+            }
         }
-        .sheet(item: $modalState) { state in
-            modalContent(for: state)
-                .presentationDetents([.medium])
-                .presentationDragIndicator(.visible)
-        }
+        .animation(.easeInOut(duration: 0.18), value: modalState?.id)
         .fullScreenCover(isPresented: $showAccountSettings) {
             AccountSettingsView(profile: profile)
         }
@@ -58,58 +73,48 @@ struct MyHomeView: View {
     }
 
     private var homeHeader: some View {
-        HStack(spacing: 14) {
-            Button {
-                showAccountSettings = true
-            } label: {
-                ZStack {
-                    Circle()
-                        .fill(Theme.surfaceLavender.opacity(0.42))
-                    Image(systemName: "person.crop.circle.fill")
-                        .font(.system(size: 42))
-                        .foregroundStyle(Theme.surfaceLavender)
-                }
-                .frame(width: 58, height: 58)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("帳號設定")
-
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(profile.name)
                     .font(.system(.title3, design: .rounded).weight(.semibold))
                     .foregroundStyle(Theme.primaryText)
-                Text("今天也把成果帶回家")
-                    .font(.system(.caption, design: .rounded))
-                    .foregroundStyle(Theme.secondaryText)
+
             }
 
             Spacer()
 
-            Button {
-                showNotificationSettings = true
-            } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.headline)
-                    .foregroundStyle(Theme.primaryText)
-                    .frame(width: 44, height: 44)
-                    .background(.white.opacity(0.62), in: Circle())
+            HStack(spacing: 10) {
+                Button {
+                    showAccountSettings = true
+                } label: {
+                    Image(systemName: "person.crop.circle.fill")
+                        .font(.system(size: 31))
+                        .foregroundStyle(Theme.surfaceLavender)
+                        .frame(width: 44, height: 44)
+                        .background(.white.opacity(0.62), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("帳號設定")
+
+                Button {
+                    showNotificationSettings = true
+                } label: {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Theme.primaryText)
+                        .frame(width: 44, height: 44)
+                        .background(.white.opacity(0.62), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("通知設定")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("通知設定")
         }
     }
 
     private var woolBank: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .center, spacing: 16) {
-                ZStack {
-                    Circle()
-                        .fill(Theme.surfaceMint.opacity(0.55))
-                    Image(systemName: "shippingbox.fill")
-                        .font(.system(size: 34))
-                        .foregroundStyle(Theme.primary)
-                }
-                .frame(width: 72, height: 72)
+                SoftIconBadge(symbolName: "shippingbox.fill", tint: Theme.primary, size: 72, iconSize: 32)
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("羊毛庫")
@@ -119,11 +124,17 @@ struct MyHomeView: View {
                     Text("\(profile.woolBankG) g")
                         .font(.system(.largeTitle, design: .rounded).weight(.semibold))
                         .foregroundStyle(Theme.primaryText)
+
+                    Text("目前可使用羊毛總量")
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(Theme.tertiaryText)
                 }
             }
 
-            Text("每日收割後的羊毛會存放在這裡；成功製作織品時會從這裡扣除。")
-                .font(.system(.body, design: .rounded))
+            Divider().overlay(Theme.surfaceMint.opacity(0.65))
+
+            Text("每天收割的羊毛都會慢慢存進這裡，累積成你努力過的柔軟證明。")
+                .font(.system(.caption, design: .rounded).weight(.medium))
                 .foregroundStyle(Theme.secondaryText)
                 .lineSpacing(3)
         }
@@ -133,11 +144,9 @@ struct MyHomeView: View {
 
     private var textileLibrary: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("織品庫")
-                .font(Theme.sectionTitleFont)
-                .foregroundStyle(Theme.primaryText)
+            sectionHeader(title: "織品庫", subtitle: "已成功製作並持有的獎勵物品")
 
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 textileCountCard(item: .gloves, count: profile.gloveCount)
                 textileCountCard(item: .scarf, count: profile.scarfCount)
                 textileCountCard(item: .cape, count: profile.capeCount)
@@ -155,9 +164,7 @@ struct MyHomeView: View {
 
     private var craftingArea: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("製作區")
-                .font(Theme.sectionTitleFont)
-                .foregroundStyle(Theme.primaryText)
+            sectionHeader(title: "製作區", subtitle: "使用羊毛製作手套、圍巾與斗篷")
 
             VStack(spacing: 12) {
                 ForEach(CraftItem.allCases) { item in
@@ -172,11 +179,21 @@ struct MyHomeView: View {
         }
     }
 
+    private func sectionHeader(title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(Theme.sectionTitleFont)
+                .foregroundStyle(Theme.primaryText)
+
+            Text(subtitle)
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(Theme.tertiaryText)
+        }
+    }
+
     private func textileCountCard(item: CraftItem, count: Int) -> some View {
         VStack(spacing: 10) {
-            Image(systemName: item.symbolName)
-                .font(.system(size: 28))
-                .foregroundStyle(item.tint)
+            SoftIconBadge(symbolName: item.symbolName, tint: item.tint, size: 46, iconSize: 22)
 
             Text(item.title)
                 .font(.system(.caption, design: .rounded).weight(.semibold))
@@ -188,8 +205,8 @@ struct MyHomeView: View {
                 .font(.system(.title3, design: .rounded).weight(.semibold))
                 .foregroundStyle(Theme.primaryText)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 18)
+        .frame(maxWidth: .infinity, minHeight: 116)
+        .padding(.vertical, 14)
         .background(
             RoundedRectangle(cornerRadius: Theme.smallRadius, style: .continuous)
                 .fill(.white.opacity(0.62))
@@ -204,14 +221,7 @@ struct MyHomeView: View {
         let hasEnoughWool = profile.woolBankG >= item.costG
 
         return HStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(item.tint.opacity(0.34))
-                Image(systemName: item.symbolName)
-                    .font(.system(size: 26))
-                    .foregroundStyle(item.tint)
-            }
-            .frame(width: 58, height: 58)
+            SoftIconBadge(symbolName: item.symbolName, tint: item.tint, size: 58, iconSize: 25, cornerRadius: 18)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(item.title)
@@ -236,39 +246,36 @@ struct MyHomeView: View {
         .softFeedbackCard(surface: .white.opacity(0.58))
     }
 
+    @ViewBuilder
     private func modalContent(for state: CraftModalState) -> some View {
-        ZStack {
-            Theme.background.ignoresSafeArea()
-
-            switch state {
-            case .confirm(let item):
-                ConfirmModal(
-                    title: "確認製作 \(item.title)？",
-                    message: "這次製作需要 \(item.costText) 羊毛。確認後會檢查羊毛餘額。",
-                    primary: ModalAction(title: "確認製作") {
-                        craft(item)
-                    },
-                    secondary: ModalAction(title: "取消") {
-                        modalState = nil
-                    }
-                )
-            case .success(let item):
-                ConfirmModal(
-                    title: "製作成功",
-                    message: "\(item.title) 已放進織品庫。",
-                    primary: ModalAction(title: "完成") {
-                        modalState = nil
-                    }
-                )
-            case .insufficient(let item):
-                ConfirmModal(
-                    title: "羊毛數量不足",
-                    message: "製作 \(item.title) 需要 \(item.costText)，目前有 \(profile.woolBankG) g。",
-                    primary: ModalAction(title: "關閉") {
-                        modalState = nil
-                    }
-                )
-            }
+        switch state {
+        case .confirm(let item):
+            ConfirmModal(
+                title: "確認製作 \(item.title)？",
+                message: "這次製作需要 \(item.costText) 羊毛。取消不會扣除羊毛，也不會新增織品。",
+                primary: ModalAction(title: "確認製作") {
+                    craft(item)
+                },
+                secondary: ModalAction(title: "取消") {
+                    modalState = nil
+                }
+            )
+        case .success(let item):
+            ConfirmModal(
+                title: "製作成功",
+                message: "羊毛庫已扣除 \(item.costText)，\(item.title) 已新增到織品庫。",
+                primary: ModalAction(title: "完成") {
+                    modalState = nil
+                }
+            )
+        case .insufficient(let item):
+            ConfirmModal(
+                title: "羊毛數量不足",
+                message: "製作 \(item.title) 需要 \(item.costText)，目前有 \(profile.woolBankG) g。羊毛庫與織品庫不會變動。",
+                primary: ModalAction(title: "關閉") {
+                    modalState = nil
+                }
+            )
         }
     }
 
@@ -278,6 +285,7 @@ struct MyHomeView: View {
             return
         }
 
+        // 同一個操作中扣羊毛並新增織品，避免兩邊資料不同步。
         profile.woolBankG -= item.costG
 
         switch item {
@@ -291,6 +299,32 @@ struct MyHomeView: View {
     }
 }
 
+private struct SoftIconBadge: View {
+    let symbolName: String
+    let tint: Color
+    var size: CGFloat
+    var iconSize: CGFloat
+    var cornerRadius: CGFloat? = nil
+
+    var body: some View {
+        ZStack {
+            if let cornerRadius {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(tint.opacity(0.28))
+            } else {
+                Circle()
+                    .fill(tint.opacity(0.28))
+            }
+
+            Image(systemName: symbolName)
+                .font(.system(size: iconSize, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: iconSize + 8, height: iconSize + 8)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 struct AccountSettingsView: View {
     @Bindable var profile: UserProfile
 
@@ -298,18 +332,32 @@ struct AccountSettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var draftName: String = ""
     @State private var isEditing = false
+    @State private var avatarRefreshCount = 0
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 24) {
-                ZStack {
-                    Circle()
-                        .fill(Theme.surfaceLavender.opacity(0.42))
-                    Image(systemName: "person.crop.circle.fill")
-                        .font(.system(size: 82))
-                        .foregroundStyle(Theme.surfaceLavender)
+                VStack(spacing: 12) {
+                    SoftIconBadge(symbolName: "person.crop.circle.fill", tint: Theme.surfaceLavender, size: 132, iconSize: 82)
+
+                    Button {
+                        avatarRefreshCount += 1
+                    } label: {
+                        Label("更換頭貼", systemImage: "photo.fill")
+                            .font(.system(.caption, design: .rounded).weight(.semibold))
+                            .foregroundStyle(Theme.primaryText)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Theme.surfaceMint.opacity(0.55), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    if avatarRefreshCount > 0 {
+                        Text("頭貼選取器尚未接入，目前先保留入口。")
+                            .font(.system(.caption2, design: .rounded))
+                            .foregroundStyle(Theme.tertiaryText)
+                    }
                 }
-                .frame(width: 132, height: 132)
                 .padding(.top, 26)
 
                 VStack(alignment: .leading, spacing: 12) {
@@ -401,7 +449,7 @@ struct NotificationSettingsView: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 20) {
-                Toggle("通知權限", isOn: $notificationsEnabled)
+                Toggle("收割提醒", isOn: $notificationsEnabled)
                     .font(.system(.headline, design: .rounded).weight(.semibold))
                     .foregroundStyle(Theme.primaryText)
                     .tint(Theme.primary)
@@ -417,7 +465,7 @@ struct NotificationSettingsView: View {
                         .foregroundStyle(Theme.secondaryText)
                 }
 
-                Text("修改後，今日任務中的「結束今天，收割羊毛！」通知島會依這個時間出現。")
+                Text("開啟後，今日任務中的「結束今天／收割羊毛」提醒會依這個時間出現。")
                     .font(.system(.caption, design: .rounded))
                     .foregroundStyle(Theme.tertiaryText)
                     .lineSpacing(3)
@@ -467,7 +515,7 @@ enum CraftItem: String, CaseIterable, Identifiable {
 
     var symbolName: String {
         switch self {
-        case .gloves: return "hands.sparkles.fill"
+        case .gloves: return "hand.raised.fill"
         case .scarf: return "wind"
         case .cape: return "person.fill"
         }
