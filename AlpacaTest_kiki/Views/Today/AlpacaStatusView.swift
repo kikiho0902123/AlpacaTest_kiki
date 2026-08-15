@@ -29,6 +29,11 @@ struct AlpacaStatusView: View {
     @Query(sort: \DailyStat.date) private var allStats: [DailyStat]
 
     @State private var tier: Int = 0
+    @State private var isBlinking = false
+
+    /// B 的眨眼圖。maxTier / todayKey 是舊的平行計數器留下的，
+    /// 階段改由 RewardEngine.alpacaGrowthTier 決定之後就不需要了。
+    private static let blinkAssetName = "(("
 
     /// 今天「還開著」的那一筆 DailyStat。
     /// 一定要帶 !isClosed：收割後 EODFlow 會把舊的那筆設成 harvested+isClosed，
@@ -50,6 +55,9 @@ struct AlpacaStatusView: View {
             alpaca
                 .id(tier)                    // 換階 → 移除＋插入 → 淡入淡出
                 .transition(.opacity)
+
+            // 閉眼圖片只疊在羊駝上方短暫出現，製造 blink 效果。
+            blinkOverlay
         }
         .frame(height: 160)
         .frame(maxWidth: .infinity)
@@ -64,6 +72,7 @@ struct AlpacaStatusView: View {
             }
         }
         .accessibilityLabel("羊駝狀態")        // 連 VoiceOver 都不講公克數
+        .task { await runBlinkLoop() }
         .onAppear { syncTier() }
         // RewardEngine 每次發放都會把新的 growthTier 一起送出來，直接用它，
         // 不要自己另外數一份（回饋頁也是讀這個值）。
@@ -94,6 +103,51 @@ struct AlpacaStatusView: View {
 
     private func resetTier() {
         applyTier(0)
+    }
+
+    // MARK: - Blink animation
+
+    // 閉眼圖大小：四張羊駝的眼睛位置一致時，只需要調這個固定寬度。
+    // 數字變大 = 閉眼圖變大；數字變小 = 閉眼圖變小。
+    private var blinkWidth: CGFloat { 22 }
+
+    // 閉眼圖左右位置：正數往右，負數往左。
+    private var blinkXOffset: CGFloat { -19.5 }
+
+    // 閉眼圖上下位置：正數往下，負數往上。
+    private var blinkYOffset: CGFloat { -46 }
+
+    @ViewBuilder
+    private var blinkOverlay: some View {
+        if UIImage(named: Self.blinkAssetName) != nil {
+            Image(Self.blinkAssetName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: blinkWidth)
+                .offset(x: blinkXOffset, y: blinkYOffset)
+                .opacity(isBlinking ? 1:0)
+                .animation(.easeInOut(duration: 0.05), value: isBlinking)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func runBlinkLoop() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(2.8))
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                isBlinking = true
+            }
+
+            try? await Task.sleep(for: .seconds(0.12))
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                isBlinking = false
+            }
+        }
     }
 
     // MARK: - Artwork
