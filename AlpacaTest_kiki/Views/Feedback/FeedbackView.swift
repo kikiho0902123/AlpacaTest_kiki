@@ -3,6 +3,7 @@
 //  AlpacaTest_kiki
 //
 //  Feedback main screen (FBK-01/02/06/07/08). Owned by B.
+//  定位：History + Reflection + Feedback，不提供任務操作。
 //
 
 import SwiftUI
@@ -10,6 +11,10 @@ import SwiftData
 
 struct FeedbackView: View {
     @Query(sort: \DailyStat.date) private var stats: [DailyStat]
+    @Query(sort: \TodoTask.createdAt) private var tasks: [TodoTask]
+    @Query(sort: \TaskLog.timestamp) private var logs: [TaskLog]
+
+    @State private var liveAlpacaOffset: CGFloat = -4
 
     private var calendar: Calendar { Calendar.current }
 
@@ -21,9 +26,7 @@ struct FeedbackView: View {
         calendar.dateInterval(of: .weekOfYear, for: today)?.start ?? today
     }
 
-    private var sixMonthsAgo: Date {
-        calendar.date(byAdding: .month, value: -6, to: today) ?? today
-    }
+    private let historyWeekCount = 12
 
     private var currentWeekDates: [Date] {
         weekDates(startingAt: currentWeekStart)
@@ -38,42 +41,45 @@ struct FeedbackView: View {
         todayStat?.woolG ?? 0
     }
 
+    // 歷史週次：固定顯示最近 12 週，不包含本週；越新的週越上方。
     private var historicalWeeks: [WeeklyFeedbackData] {
-        let eligibleStats = stats.filter { stat in
-            let day = calendar.startOfDay(for: stat.date)
-            return day < currentWeekStart && day >= sixMonthsAgo
-        }
-
-        let starts = Set(eligibleStats.map { stat in
-            calendar.dateInterval(of: .weekOfYear, for: stat.date)?.start ?? calendar.startOfDay(for: stat.date)
-        })
-
-        return starts
-            .sorted(by: >)
-            .map { start in
-                WeeklyFeedbackData(
-                    startDate: start,
-                    dates: weekDates(startingAt: start),
-                    stats: statsForWeek(startingAt: start)
-                )
+        (1...historyWeekCount).compactMap { offset in
+            guard let start = calendar.date(byAdding: .weekOfYear, value: -offset, to: currentWeekStart) else {
+                return nil
             }
+
+            let dates = weekDates(startingAt: start)
+            return WeeklyFeedbackData(
+                startDate: start,
+                dates: dates,
+                stats: statsForWeek(dates),
+                tasks: tasksForWeek(dates),
+                logs: logsForWeek(dates)
+            )
+        }
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
+                    // UI 區塊 1：當下羊駝狀態。代表今天的 live state，不是歷史快照。
                     liveSummary
+
+                    // UI 區塊 2：本週七天 timeline。只有已結束、已存檔的日期可以點進日回饋。
                     currentWeekSnapshots
 
+                    // UI 區塊 3：歷史週次。每週包含日期範圍、七天快照與週回饋文字。
                     if !historicalWeeks.isEmpty {
                         historicalWeeklyBlocks
                     }
 
+                    // UI 區塊 4：三個月歷史資料保存邊界。
                     historyBoundary
                 }
                 .padding(.horizontal, 22)
-                .padding(.vertical, 22)
+                .padding(.top, 8)
+                .padding(.bottom, 22)
             }
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("記錄與回饋")
@@ -81,34 +87,36 @@ struct FeedbackView: View {
     }
 
     private var liveSummary: some View {
-        VStack(spacing: 18) {
-            AlpacaFeedbackSnapshot(woolG: todayWool, size: 148)
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(spacing: 18) {
+                // 這裡用輕微 idle animation 表示「正在進行中的一天」。
+                AlpacaFeedbackSnapshot(woolG: todayWool, size: 150, isLive: true)
+                    .offset(y: liveAlpacaOffset)
+                    .animation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true), value: liveAlpacaOffset)
+                    .onAppear { liveAlpacaOffset = 4 }
 
-            VStack(spacing: 8) {
-                Text("目前羊毛重量 \(todayWool) g")
-                    .font(.system(.title2, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Theme.primaryText)
-                    .multilineTextAlignment(.center)
+                VStack(spacing: 8) {
+                    Text("目前已累積 \(todayWool) 克羊毛")
+                        .font(.system(.title2, design: .rounded).weight(.semibold))
+                        .foregroundStyle(Theme.primaryText)
+                        .multilineTextAlignment(.center)
 
-                Text(FeedbackCaptions.caption(for: todayWool))
-                    .font(.system(.body, design: .rounded))
-                    .foregroundStyle(Theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
+                    Text(FeedbackCaptions.caption(for: todayWool))
+                        .font(.system(.body, design: .rounded))
+                        .foregroundStyle(Theme.secondaryText)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(3)
+                }
             }
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 30)
+        .padding(.vertical, 22)
         .padding(.horizontal, 24)
         .softFeedbackCard(surface: .white.opacity(0.72))
     }
 
     private var currentWeekSnapshots: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("本週快照")
-                .font(Theme.sectionTitleFont)
-                .foregroundStyle(Theme.primaryText)
-
             HStack(spacing: 9) {
                 ForEach(currentWeekDates, id: \.self) { date in
                     WeeklySnapshotCell(
@@ -123,11 +131,7 @@ struct FeedbackView: View {
     }
 
     private var historicalWeeklyBlocks: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("歷史週次")
-                .font(Theme.sectionTitleFont)
-                .foregroundStyle(Theme.primaryText)
-
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(historicalWeeks) { week in
                 HistoricalWeeklyBlock(week: week)
             }
@@ -135,7 +139,7 @@ struct FeedbackView: View {
     }
 
     private var historyBoundary: some View {
-        Text("已顯示最近六個月資料")
+        Text("已顯示最近三個月，共 12 週資料")
             .font(.system(.caption, design: .rounded))
             .foregroundStyle(Theme.tertiaryText)
             .frame(maxWidth: .infinity)
@@ -151,9 +155,23 @@ struct FeedbackView: View {
         stats.first { calendar.isDate($0.date, inSameDayAs: date) }
     }
 
-    private func statsForWeek(startingAt start: Date) -> [DailyStat] {
-        let dates = weekDates(startingAt: start)
-        return dates.compactMap { stat(for: $0) }
+    private func statsForWeek(_ dates: [Date]) -> [DailyStat] {
+        dates.compactMap { stat(for: $0) }
+    }
+
+    private func tasksForWeek(_ dates: [Date]) -> [TodoTask] {
+        tasks.filter { task in
+            dates.contains { date in
+                calendar.isDate(task.createdAt, inSameDayAs: date)
+                    || task.startDate.map { calendar.isDate($0, inSameDayAs: date) } == true
+            }
+        }
+    }
+
+    private func logsForWeek(_ dates: [Date]) -> [TaskLog] {
+        logs.filter { log in
+            dates.contains { calendar.isDate(log.timestamp, inSameDayAs: $0) }
+        }
     }
 
     private func relation(to date: Date) -> WeekDateRelation {
@@ -164,7 +182,6 @@ struct FeedbackView: View {
         return date < today ? .past : .future
     }
 }
-
 
 private enum WeekDateRelation {
     case past
@@ -177,6 +194,8 @@ private struct WeeklyFeedbackData: Identifiable {
     let startDate: Date
     let dates: [Date]
     let stats: [DailyStat]
+    let tasks: [TodoTask]
+    let logs: [TaskLog]
 
     var endDate: Date {
         dates.last ?? startDate
@@ -193,6 +212,14 @@ private struct WeeklyFeedbackData: Identifiable {
     var stuckCount: Int {
         stats.reduce(0) { $0 + $1.stuckCount }
     }
+
+    var completionLogs: [TaskLog] {
+        logs.filter { $0.type == "completion" }
+    }
+
+    var stuckLogs: [TaskLog] {
+        logs.filter { $0.type == "chatSummary" }
+    }
 }
 
 private struct HistoricalWeeklyBlock: View {
@@ -201,7 +228,11 @@ private struct HistoricalWeeklyBlock: View {
     private var calendar: Calendar { Calendar.current }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
+            Divider()
+                .overlay(Theme.surfaceMint.opacity(0.65))
+
+            // 週 Header：讓使用者滑很深時仍知道自己看到哪一週。
             HStack(alignment: .firstTextBaseline) {
                 Text(weekRangeText)
                     .font(.system(.headline, design: .rounded).weight(.semibold))
@@ -212,11 +243,9 @@ private struct HistoricalWeeklyBlock: View {
                 Text("\(week.totalWool) g")
                     .font(.system(.caption, design: .rounded).weight(.semibold))
                     .foregroundStyle(Theme.secondaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Theme.surfaceMint.opacity(0.7), in: Capsule())
             }
 
+            // 歷史週的七張快照：作為 Daily Feedback 的入口。
             HStack(spacing: 9) {
                 ForEach(week.dates, id: \.self) { date in
                     WeeklySnapshotCell(
@@ -228,15 +257,15 @@ private struct HistoricalWeeklyBlock: View {
                 }
             }
 
-            WeeklyFeedbackText(week: week)
+            // 週回饋：由工程師 C 接入 AI 週分析；目前先保留固定 placeholder。
+            WeeklyFeedbackPlaceholder()
         }
-        .padding(18)
-        .softFeedbackCard(surface: .white.opacity(0.58))
+        .padding(.vertical, 18)
     }
 
     private var weekRangeText: String {
-        let start = week.startDate.formatted(.dateTime.month(.abbreviated).day())
-        let end = week.endDate.formatted(.dateTime.month(.abbreviated).day())
+        let start = week.startDate.formatted(.dateTime.month().day())
+        let end = week.endDate.formatted(.dateTime.month().day())
         return "\(start) - \(end)"
     }
 
@@ -245,69 +274,25 @@ private struct HistoricalWeeklyBlock: View {
     }
 }
 
-private struct WeeklyFeedbackText: View {
-    let week: WeeklyFeedbackData
-
-    private var hasEnoughData: Bool {
-        week.stats.count >= 4
-    }
-
+private struct WeeklyFeedbackPlaceholder: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            feedbackRow(title: "本週肯定", text: affirmationText, tint: Theme.surfaceLeaf)
-            feedbackRow(title: "這週的卡關時刻", text: stuckText, tint: Theme.surfaceLavender)
-            feedbackRow(title: "給這週的你", text: suggestionText, tint: Theme.surfaceMint)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("週回饋文字")
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(Theme.secondaryText)
+
+            Text("週分析由工程師 C 接入，目前尚未產生。")
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundStyle(Theme.tertiaryText)
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
         .background(
             RoundedRectangle(cornerRadius: Theme.smallRadius, style: .continuous)
                 .fill(Theme.background.opacity(0.9))
         )
-    }
-
-    private func feedbackRow(title: String, text: String, tint: Color) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Circle()
-                .fill(tint)
-                .frame(width: 9, height: 9)
-                .padding(.top, 5)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(.caption, design: .rounded).weight(.semibold))
-                    .foregroundStyle(Theme.secondaryText)
-
-                Text(text)
-                    .font(.system(.caption, design: .rounded))
-                    .foregroundStyle(Theme.primaryText.opacity(0.82))
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private var affirmationText: String {
-        if week.totalWool == 0 {
-            return hasEnoughData ? "這週的紀錄很安靜，也許你把力氣留給了生活本身。" : "資料還不多，先把這週當成重新觀察自己的起點。"
-        }
-
-        return "你這週累積了 \(week.totalWool) g 羊毛，完成感不是突然出現，是被你每天慢慢堆起來的。"
-    }
-
-    private var stuckText: String {
-        if week.stuckCount == 0 {
-            return hasEnoughData ? "這週幾乎沒有留下卡關紀錄，看起來節奏相對順。" : "目前資料不足，還不能很確定卡關模式。"
-        }
-
-        return "你留下了 \(week.stuckCount) 次卡關求助，這代表你有在辨認阻力，而不是只是硬撐。"
-    }
-
-    private var suggestionText: String {
-        if week.doneCount >= 3 {
-            return "下週可以延續這個節奏，把大任務先拆小，再讓完成感更早出現。"
-        }
-
-        return "下週先挑一件最容易開始的事，把開始門檻降到小到不能再小。"
     }
 }
 
@@ -325,8 +310,9 @@ private struct WeeklySnapshotCell: View {
         date.formatted(.dateTime.day())
     }
 
+    // 所有過去日期都是日回饋入口；沒有資料時由 DailyFeedbackView 顯示「當日無資料」。
     private var canOpenDailyFeedback: Bool {
-        relation == .past && stat != nil
+        relation == .past
     }
 
     var body: some View {
@@ -335,20 +321,28 @@ private struct WeeklySnapshotCell: View {
                 NavigationLink {
                     DailyFeedbackView(date: date)
                 } label: {
-                    cellContent(isInteractive: true)
+                    pastContent
                 }
                 .buttonStyle(.plain)
-            } else if relation == .future {
-                futureContent
             } else {
-                cellContent(isInteractive: false)
+                dateOnlyContent(isCurrentDay: relation == .today)
             }
         }
         .frame(maxWidth: .infinity)
     }
 
-    private func cellContent(isInteractive: Bool) -> some View {
-        VStack(spacing: 7) {
+    private var pastContent: some View {
+        Group {
+            if let stat {
+                pastContentWithSnapshot(stat)
+            } else {
+                dateOnlyContent(isCurrentDay: false)
+            }
+        }
+    }
+
+    private func pastContentWithSnapshot(_ stat: DailyStat) -> some View {
+        VStack(spacing: 4) {
             Text(dayText)
                 .font(.system(.caption2, design: .rounded).weight(.medium))
                 .foregroundStyle(Theme.tertiaryText)
@@ -357,78 +351,48 @@ private struct WeeklySnapshotCell: View {
                 .font(.system(.subheadline, design: .rounded).weight(.semibold))
                 .foregroundStyle(Theme.primaryText)
 
-            if let stat {
-                AlpacaFeedbackSnapshot(woolG: stat.woolG, size: 36)
-                Text(labelText(for: stat))
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(Theme.secondaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            } else {
-                Image(systemName: "pawprint")
-                    .font(.title3)
-                    .foregroundStyle(Theme.surfaceLavender.opacity(0.72))
-                Text(relation == .today ? "進行中" : "無紀錄")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(Theme.tertiaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
+            AlpacaFeedbackSnapshot(woolG: stat.woolG, size: 30)
         }
-        .frame(minHeight: 112)
-        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity, minHeight: 76)
+        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: Theme.smallRadius, style: .continuous)
-                .fill(cellSurface(isInteractive: isInteractive))
+                .fill(.white.opacity(0.72))
         )
         .overlay(
             RoundedRectangle(cornerRadius: Theme.smallRadius, style: .continuous)
-                .stroke(relation == .today ? Theme.highlight.opacity(0.75) : .white.opacity(0.75), lineWidth: relation == .today ? 1.5 : 1)
+                .stroke(.white.opacity(0.75), lineWidth: 1)
         )
     }
 
-    private var futureContent: some View {
-        VStack(spacing: 9) {
+    private func dateOnlyContent(isCurrentDay: Bool) -> some View {
+        VStack(spacing: 5) {
             Text(dayText)
                 .font(.system(.caption2, design: .rounded).weight(.medium))
-                .foregroundStyle(Theme.tertiaryText.opacity(0.6))
+                .foregroundStyle(isCurrentDay ? Theme.tertiaryText : Theme.tertiaryText.opacity(0.65))
 
             Text(dayNumber)
                 .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                .foregroundStyle(Theme.tertiaryText.opacity(0.6))
-
-            Text("?")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(Theme.tertiaryText.opacity(0.5))
+                .foregroundStyle(isCurrentDay ? Theme.primaryText : Theme.tertiaryText.opacity(0.72))
         }
-        .frame(minHeight: 112)
-        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity, minHeight: 58)
+        .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: Theme.smallRadius, style: .continuous)
-                .fill(.white.opacity(0.38))
+                .fill(isCurrentDay ? Theme.highlight.opacity(0.12) : .white.opacity(0.38))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.smallRadius, style: .continuous)
+                .stroke(isCurrentDay ? Theme.highlight.opacity(0.75) : .white.opacity(0.75), lineWidth: isCurrentDay ? 1.5 : 1)
         )
     }
 
-    private func cellSurface(isInteractive: Bool) -> Color {
-        if relation == .today {
-            return Theme.highlight.opacity(0.12)
-        }
-
-        return isInteractive ? .white.opacity(0.72) : .white.opacity(0.46)
-    }
-
-    private func labelText(for stat: DailyStat) -> String {
-        if relation == .today {
-            return "進行中"
-        }
-
-        return showsProgressText ? "\(stat.woolG)g" : "\(stat.doneCount) 完成"
-    }
 }
 
 struct AlpacaFeedbackSnapshot: View {
     let woolG: Int
     var size: CGFloat
+    var isLive: Bool = false
 
     private var tier: Int {
         switch woolG {
@@ -451,7 +415,7 @@ struct AlpacaFeedbackSnapshot: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(color.opacity(0.28))
+                .fill(color.opacity(isLive ? 0.34 : 0.28))
 
             Circle()
                 .fill(.white.opacity(0.34))
@@ -466,7 +430,7 @@ struct AlpacaFeedbackSnapshot: View {
                 .symbolEffect(.bounce, value: tier)
         }
         .frame(width: size, height: size)
-        .accessibilityLabel("羊駝蓬鬆程度")
+        .accessibilityLabel(isLive ? "目前進行中的羊駝狀態" : "歷史羊駝快照")
     }
 }
 
