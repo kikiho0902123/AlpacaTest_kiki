@@ -262,6 +262,12 @@ struct TaskEditorView: View {
                     .pickerStyle(.segmented)
                 }
             }
+            // 這頁原本完全沒套主題，是 iOS 預設的灰底 Form，跟其他頁不一致。
+            // 作法跟 B 的 CompletionView / MyHomeView 一樣：關掉系統底色再鋪主題色。
+            .scrollContentBackground(.hidden)
+            .background(Theme.background.ignoresSafeArea())
+            .listRowBackground(Color.white.opacity(0.72))
+            .foregroundStyle(Theme.primaryText)
             .navigationTitle(screenTitle)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
