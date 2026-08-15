@@ -222,12 +222,14 @@ private enum WeekDateRelation {
 }
 
 private struct WeeklyFeedbackData: Identifiable {
-    let id = UUID()
     let startDate: Date
     let dates: [Date]
     let stats: [DailyStat]
     let tasks: [TodoTask]
     let logs: [TaskLog]
+
+    // 同一週在畫面重算後仍要是同一個項目，否則 SwiftUI 會重建整個區塊並重跑 `.task`。
+    var id: Date { startDate }
 
     var endDate: Date {
         dates.last ?? startDate
@@ -256,6 +258,9 @@ private struct WeeklyFeedbackData: Identifiable {
 
 private struct HistoricalWeeklyBlock: View {
     let week: WeeklyFeedbackData
+
+    @State private var feedbackText: String?
+    @State private var isLoadingFeedback = true
 
     private var calendar: Calendar { Calendar.current }
 
@@ -289,10 +294,29 @@ private struct HistoricalWeeklyBlock: View {
                 }
             }
 
-            // 週回饋：由工程師 C 接入 AI 週分析；目前先保留固定 placeholder。
-            WeeklyFeedbackPlaceholder()
+            // 週回饋：空白週由 API 回 nil，維持 placeholder；有資料才顯示三段式 AI 回饋。
+            if let feedbackText {
+                WeeklyFeedbackCard(text: feedbackText)
+            } else if isLoadingFeedback {
+                WeeklyFeedbackLoadingPlaceholder()
+            } else {
+                WeeklyFeedbackPlaceholder()
+            }
         }
         .padding(.vertical, 18)
+        .task(id: week.startDate) {
+            isLoadingFeedback = true
+            defer { isLoadingFeedback = false }
+            feedbackText = try? await AIService.shared.weeklyFeedback(
+                WeeklyStats(
+                    startDate: week.startDate,
+                    endDate: week.endDate,
+                    stats: week.stats,
+                    logs: week.logs,
+                    tasks: week.tasks
+                )
+            )
+        }
     }
 
     private var weekRangeText: String {
@@ -306,6 +330,40 @@ private struct HistoricalWeeklyBlock: View {
     }
 }
 
+private struct WeeklyFeedbackLoadingPlaceholder: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+            Text("正在整理這週的回饋…")
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundStyle(Theme.tertiaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.smallRadius, style: .continuous)
+                .fill(Theme.background.opacity(0.9))
+        )
+    }
+}
+
+private struct WeeklyFeedbackCard: View {
+    let text: String
+
+    var body: some View {
+        MarkdownText(raw: text)
+            .font(.system(.subheadline, design: .rounded))
+            .foregroundStyle(Theme.primaryText)
+            .lineSpacing(4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.smallRadius, style: .continuous)
+                    .fill(Theme.background.opacity(0.9))
+            )
+    }
+}
+
 private struct WeeklyFeedbackPlaceholder: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -313,7 +371,7 @@ private struct WeeklyFeedbackPlaceholder: View {
                 .font(.system(.caption, design: .rounded).weight(.semibold))
                 .foregroundStyle(Theme.secondaryText)
 
-            Text("週分析由工程師 C 接入，目前尚未產生。")
+            Text("這週還沒有足夠的活動資料可以產生回饋。")
                 .font(.system(.subheadline, design: .rounded))
                 .foregroundStyle(Theme.tertiaryText)
                 .lineSpacing(4)

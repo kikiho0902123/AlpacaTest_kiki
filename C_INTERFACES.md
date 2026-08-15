@@ -215,6 +215,9 @@ SwiftUI 的 `Text` **只對字串常數解析 Markdown**，變數不會生效，
 
 ## 9. 週回饋 API（給 B 的 FeedbackView）★ 新增
 
+**整合狀態：✅ 已接入。** `FeedbackView.HistoricalWeeklyBlock` 會以週起始日作為穩定識別，
+載入時顯示整理中狀態；有資料時用 `MarkdownText` 顯示三段式回饋；空白週維持資料不足提示。
+
 ```swift
 struct WeeklyStats {
     var startDate: Date
