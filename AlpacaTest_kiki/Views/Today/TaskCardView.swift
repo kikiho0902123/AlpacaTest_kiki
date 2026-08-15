@@ -14,6 +14,14 @@ import SwiftData
 
 struct TaskCardView: View {
     @Bindable var task: TodoTask
+
+    /// 拆分流程要由「不會消失的祖先」來呈現，不能由這張卡自己 present。
+    /// 拆分成功後 task.status 變成 "split"，卡片會從「待辦」區搬到「已拆分」區
+    /// ——那是兩個不同的 ForEach 子樹，卡片會被銷毀、@State 一起消失，
+    /// SPL-04「拆分完成」就會在使用者按「確定」之前自己關掉。
+    /// 由 TodayView 提供這個 callback；nil 時退回自己 present（給 Preview 用）。
+    var onRequestSplit: ((TodoTask, SplitSource) -> Void)? = nil
+
     @Environment(\.modelContext) private var modelContext
 
     // MARK: - Step 4 routing state
@@ -211,7 +219,7 @@ struct TaskCardView: View {
             StartAskSplitModal(
                 onSplit: {
                     cover = nil
-                    sheet = .split(.startAsk)
+                    requestSplit(.startAsk)
                 },
                 onStartDirectly: {
                     cover = nil
@@ -281,7 +289,7 @@ struct TaskCardView: View {
 
             if !isStarted {
                 Button {
-                    sheet = .split(.manual)
+                    requestSplit(.manual)
                 } label: {
                     Label("拆分", systemImage: "square.split.2x2")
                 }
@@ -333,9 +341,18 @@ struct TaskCardView: View {
     // MARK: - Actions
 
     /// 開始前先問 TOD-04；開始後主要按鈕直接進手動拆分（SPL-01 .manual）
+    /// 交給祖先 present；沒有 callback（Preview）才自己來。
+    private func requestSplit(_ source: SplitSource) {
+        if let onRequestSplit {
+            onRequestSplit(task, source)
+        } else {
+            sheet = .split(source)
+        }
+    }
+
     private func primaryAction() {
         if isStarted {
-            sheet = .split(.manual)
+            requestSplit(.manual)
         } else {
             cover = .startAsk
         }

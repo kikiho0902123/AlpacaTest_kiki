@@ -25,6 +25,12 @@ struct TodayView: View {
     @State private var completingTaskID: UUID?
     @State private var eodRequest: EODRequest?
 
+    /// 拆分流程由 TodayView 呈現，不是由任務卡自己 present。
+    /// 拆分成功會把 status 改成 "split"，卡片就從「待辦」搬到「已拆分」——
+    /// 兩個不同子樹，卡片被銷毀，它 present 的 SPL-04「拆分完成」會跟著消失。
+    /// TodayView 不會消失，所以由它持有這個 sheet。
+    @State private var splitRequest: SplitRequest?
+
     // MARK: - Dev flags (remove/flip before shipping)
 
     /// EOD-01 requires the island to be ALWAYS VISIBLE during development.
@@ -154,6 +160,9 @@ struct TodayView: View {
                 }
             }
         }
+        .sheet(item: $splitRequest) { request in
+            SplitFlowModal(task: request.task, source: request.source)
+        }
         .sheet(item: $eodRequest) { request in
             EODAchievementModal(
                 settlementDate: request.date,
@@ -204,8 +213,10 @@ struct TodayView: View {
                     .padding(.horizontal)
 
                 ForEach(tasks) { task in
-                    TaskCardView(task: task)
-                        .padding(.horizontal)
+                    TaskCardView(task: task) { task, source in
+                        splitRequest = SplitRequest(task: task, source: source)
+                    }
+                    .padding(.horizontal)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
