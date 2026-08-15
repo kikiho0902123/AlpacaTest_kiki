@@ -34,8 +34,10 @@ struct AlpacaStatusView: View {
     @AppStorage("alpaca.grantCount") private var storedCount: Int = 0
 
     @State private var tier: Int = 0
+    @State private var isBlinking = false
 
     private static let maxTier = 3
+    private static let blinkAssetName = "(("
 
     /// 當天的 key。用本地日曆，跟 TodayView 的當日區間同一套時區觀念。
     private var todayKey: String {
@@ -65,6 +67,9 @@ struct AlpacaStatusView: View {
             alpaca
                 .id(tier)                    // 換階 → 移除＋插入 → 淡入淡出
                 .transition(.opacity)
+
+            // 閉眼圖片只疊在羊駝上方短暫出現，製造 blink 效果。
+            blinkOverlay
         }
         .frame(height: 160)
         .frame(maxWidth: .infinity)
@@ -79,6 +84,7 @@ struct AlpacaStatusView: View {
             }
         }
         .accessibilityLabel("羊駝狀態")        // 連 VoiceOver 都不講公克數
+        .task { await runBlinkLoop() }
         .onAppear { syncTier() }
         .onReceive(NotificationCenter.default.publisher(for: .woolGained)) { _ in
             registerGrant()
@@ -125,6 +131,51 @@ struct AlpacaStatusView: View {
         storedCount = 0
         withAnimation(.easeInOut(duration: 0.40)) {
             tier = 0
+        }
+    }
+
+    // MARK: - Blink animation
+
+    // 閉眼圖大小：四張羊駝的眼睛位置一致時，只需要調這個固定寬度。
+    // 數字變大 = 閉眼圖變大；數字變小 = 閉眼圖變小。
+    private var blinkWidth: CGFloat { 22 }
+
+    // 閉眼圖左右位置：正數往右，負數往左。
+    private var blinkXOffset: CGFloat { -19.5 }
+
+    // 閉眼圖上下位置：正數往下，負數往上。
+    private var blinkYOffset: CGFloat { -46 }
+
+    @ViewBuilder
+    private var blinkOverlay: some View {
+        if UIImage(named: Self.blinkAssetName) != nil {
+            Image(Self.blinkAssetName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: blinkWidth)
+                .offset(x: blinkXOffset, y: blinkYOffset)
+                .opacity(isBlinking ? 1:0)
+                .animation(.easeInOut(duration: 0.05), value: isBlinking)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func runBlinkLoop() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(2.8))
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                isBlinking = true
+            }
+
+            try? await Task.sleep(for: .seconds(0.12))
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                isBlinking = false
+            }
         }
     }
 
