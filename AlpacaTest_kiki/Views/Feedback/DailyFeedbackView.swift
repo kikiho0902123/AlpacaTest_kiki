@@ -44,6 +44,15 @@ struct DailyFeedbackView: View {
         dayStat?.woolG ?? 0
     }
 
+    private var snapshotTier: Int {
+        guard let dayStat else { return 0 }
+        return AlpacaFeedbackSnapshot.tierForRecordedActions(
+            startCount: dayStat.startCount,
+            stuckCount: dayStat.stuckCount,
+            doneCount: dayStat.doneCount
+        )
+    }
+
     private var hasAnyDayData: Bool {
         dayStat != nil || !dayTasks.isEmpty || !dayLogs.isEmpty
     }
@@ -82,7 +91,7 @@ struct DailyFeedbackView: View {
                 .foregroundStyle(Theme.primaryText)
                 .multilineTextAlignment(.center)
 
-            AlpacaFeedbackSnapshot(woolG: woolG, size: 136)
+            AlpacaFeedbackSnapshot(woolG: woolG, size: 136, growthTier: snapshotTier)
 
             VStack(spacing: 8) {
                 Text(hasAnyDayData ? "當日累積 \(woolG) 克羊毛" : "當日無資料")

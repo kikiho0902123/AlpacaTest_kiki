@@ -40,6 +40,14 @@ struct EODAchievementModal: View {
         settlementStat.woolG
     }
 
+    private var settlementAlpacaTier: Int {
+        AlpacaFeedbackSnapshot.tierForRecordedActions(
+            startCount: settlementStat.startCount,
+            stuckCount: settlementStat.stuckCount,
+            doneCount: settlementStat.doneCount
+        )
+    }
+
     private var settlementTasks: [TodoTask] {
         tasks.filter { task in
             calendar.isDate(task.createdAt, inSameDayAs: settlementDate)
@@ -63,6 +71,7 @@ struct EODAchievementModal: View {
             woolG: settlementWool,
             caption: FeedbackCaptions.caption(for: settlementWool),
             biggestTask: biggestTaskText,
+            alpacaTier: settlementAlpacaTier,
             startCount: settlementStat.startCount,
             stuckCount: settlementStat.stuckCount,
             doneCount: settlementStat.doneCount
@@ -103,7 +112,7 @@ struct EODAchievementModal: View {
                         .background(Theme.surfaceLavender.opacity(0.28), in: Capsule())
                 }
 
-                AlpacaFeedbackSnapshot(woolG: settlementWool, size: 150)
+                AlpacaFeedbackSnapshot(woolG: settlementWool, size: 150, growthTier: settlementAlpacaTier)
 
                 Text("收集了 \(settlementWool) g")
                     .font(.system(.title2, design: .rounded).weight(.semibold))
@@ -168,7 +177,7 @@ struct EODAchievementModal: View {
 
     private var harvestingView: some View {
         VStack(spacing: 18) {
-            AlpacaFeedbackSnapshot(woolG: settlementWool, size: 156)
+            AlpacaFeedbackSnapshot(woolG: settlementWool, size: 156, growthTier: settlementAlpacaTier)
                 .scaleEffect(harvestScale)
                 .opacity(harvestOpacity)
 
@@ -354,7 +363,7 @@ struct EODShareTemplateView: View {
 
     private func shareCard(template: EODShareTemplate) -> some View {
         VStack(spacing: 18) {
-            AlpacaFeedbackSnapshot(woolG: summary.woolG, size: template == .full ? 132 : 156)
+            AlpacaFeedbackSnapshot(woolG: summary.woolG, size: template == .full ? 132 : 156, growthTier: summary.alpacaTier)
 
             Text("\(summary.woolG) g")
                 .font(.system(template == .full ? .title : .largeTitle, design: .rounded).weight(.semibold))
@@ -409,6 +418,7 @@ struct EODShareSummary {
     let woolG: Int
     let caption: String
     let biggestTask: String
+    let alpacaTier: Int
     let startCount: Int
     let stuckCount: Int
     let doneCount: Int
