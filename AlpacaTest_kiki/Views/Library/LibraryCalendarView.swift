@@ -22,15 +22,28 @@ struct LibraryCalendarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            monthHeader
+            // 月曆整塊放在一張卡上。原本每一格各自是一張白卡，
+            // 42 張圓角小卡在畫面上很吵，而且空日子也長得像可以放東西。
+            VStack(spacing: 14) {
+                monthHeader
+                weekdayHeader
 
-            weekdayHeader
-
-            // .id 讓月份一換就重建 → 內部的 @Query 會用新的月份區間重跑
-            MonthGrid(monthAnchor: monthAnchor) { day in
-                selectedDay = DaySelection(date: day)
+                // .id 讓月份一換就重建 → 內部的 @Query 會用新的月份區間重跑
+                MonthGrid(monthAnchor: monthAnchor) { day in
+                    selectedDay = DaySelection(date: day)
+                }
+                .id(monthAnchor)
             }
-            .id(monthAnchor)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.9))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .stroke(Color.alpacaBeige, lineWidth: 1.2)
+            )
 
             UnscheduledStrip()
         }
@@ -56,7 +69,7 @@ struct LibraryCalendarView: View {
             Spacer()
 
             Text(CalendarMath.monthTitle(for: monthAnchor))
-                .font(.alpacaTitle)
+                .font(.alpacaHeading)
                 .foregroundStyle(Color.alpacaBrown)
 
             Spacer()
@@ -75,11 +88,11 @@ struct LibraryCalendarView: View {
     }
 
     private var weekdayHeader: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(CalendarMath.weekdaySymbols, id: \.self) { symbol in
                 Text(symbol)
-                    .font(.alpacaCaption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(.caption2, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.alpacaBrown.opacity(0.5))
                     .frame(maxWidth: .infinity)
             }
         }
@@ -109,7 +122,7 @@ private struct MonthGrid: View {
 
     @Query private var tasks: [TodoTask]
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
 
     init(monthAnchor: Date, onSelectDay: @escaping (Date) -> Void) {
         self.monthAnchor = monthAnchor
@@ -143,7 +156,7 @@ private struct MonthGrid: View {
         let days = CalendarMath.gridDays(for: monthAnchor)
         let byDay = tasksByDay
 
-        LazyVGrid(columns: columns, spacing: 4) {
+        LazyVGrid(columns: columns, spacing: 6) {
             ForEach(days, id: \.self) { day in
                 DayCell(
                     day: day,
@@ -163,72 +176,55 @@ private struct DayCell: View {
     let isToday: Bool
     let tasks: [TodoTask]
 
-    private let maxChips = 3
+    /// 手機寬度下一格只有約 48pt，塞不下看得懂的任務名稱
+    /// （之前每個名稱都被截成兩三個字，等於沒有資訊）。
+    /// 改成分類色點，數量到 3 個為止，再多用 +N 表示；名稱在點下去的單日總覽看。
+    private let maxDots = 3
+
+    private var dotColors: [Color] {
+        tasks.prefix(maxDots).map {
+            CategoryColor.color(colorHex: $0.colorHex, category: $0.category)
+        }
+    }
+
+    private var overflow: Int {
+        max(tasks.count - maxDots, 0)
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(spacing: 5) {
             Text("\(CalendarMath.calendar.component(.day, from: day))")
-                .font(.system(.caption, design: .rounded).weight(isToday ? .bold : .regular))
+                .font(.system(.subheadline, design: .rounded).weight(isToday ? .bold : .medium))
                 .foregroundStyle(dayNumberColor)
-                .frame(width: 20, height: 20)
+                .frame(width: 30, height: 30)
                 .background(
-                    Circle()
-                        .fill(isToday ? Color.alpacaTerracotta : .clear)
+                    Circle().fill(isToday ? Color.alpacaTerracotta : .clear)
                 )
 
-            ForEach(tasks.prefix(maxChips)) { task in
-                TaskChip(task: task)
-            }
+            // 固定高度，讓沒有任務的日子也維持一樣的格線節奏
+            HStack(spacing: 3) {
+                ForEach(Array(dotColors.enumerated()), id: \.offset) { _, color in
+                    Circle()
+                        .fill(color)
+                        .frame(width: 5, height: 5)
+                }
 
-            if tasks.count > maxChips {
-                Text("+\(tasks.count - maxChips)")
-                    .font(.system(size: 9, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 2)
+                if overflow > 0 {
+                    Text("+\(overflow)")
+                        .font(.system(size: 9, design: .rounded).weight(.medium))
+                        .foregroundStyle(Color.alpacaBrown.opacity(0.55))
+                }
             }
-
-            Spacer(minLength: 0)
+            .frame(height: 7)
         }
-        .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
-        .padding(4)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(isInDisplayedMonth ? 0.75 : 0.35))
-        )
-        .opacity(isInDisplayedMonth ? 1 : 0.45)
-        .contentShape(Rectangle())
+        .frame(maxWidth: .infinity, minHeight: 52)
+        .opacity(isInDisplayedMonth ? 1 : 0.35)
+        .contentShape(Rectangle())      // 空白處也要能點
     }
 
     private var dayNumberColor: Color {
         if isToday { return .white }
-        return isInDisplayedMonth ? Color.alpacaBrown : Color.alpacaBrown.opacity(0.5)
-    }
-}
-
-/// 格子裡的任務 chip：色點 + 截斷的名稱。這個尺寸下只用來看，不能點。
-private struct TaskChip: View {
-    let task: TodoTask
-
-    private var dotColor: Color {
-        if let hex = task.colorHex, let color = Color(hex: hex) { return color }
-        return .alpacaTerracotta
-    }
-
-    var body: some View {
-        HStack(spacing: 2) {
-            Circle()
-                .fill(dotColor)
-                .frame(width: 5, height: 5)
-
-            Text(task.name)
-                .font(.system(size: 9, design: .rounded))
-                .foregroundStyle(task.status == "done" ? Color.alpacaBrown.opacity(0.45) : Color.alpacaBrown)
-                .strikethrough(task.status == "done")
-                .lineLimit(1)
-                .truncationMode(.tail)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .allowsHitTesting(false)   // 點擊一律交給整個格子
+        return isInDisplayedMonth ? Color.alpacaBrown : Color.alpacaBrown.opacity(0.55)
     }
 }
 
