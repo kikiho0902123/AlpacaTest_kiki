@@ -22,6 +22,9 @@ struct StuckChatView: View {
     @State private var inputText = ""
     @State private var isLoading = false
     @State private var currentReply: StuckReply?
+    /// AI 每輪的內部分析。只活在這次 session（不寫資料庫），下一輪回餵給 AI，
+    /// 也給拆分與摘要當作「這次到底卡在哪」的依據。使用者永遠看不到。
+    @State private var analysis: ContextAnalysis?
     @State private var safetyActive = false
     @State private var splitEnded = false
     @State private var showSplit = false
@@ -34,6 +37,9 @@ struct StuckChatView: View {
     private var round: Int { min(userCount + 1, 8) }
     /// STK-02H：第 8 輪（第 7 則使用者訊息的回覆）之後鎖輸入；safety 不受限
     private var isLocked: Bool { userCount >= 7 && !safetyActive }
+    /// 有實際互動才值得記錄：使用者說過話，或這次真的把任務拆了。
+    /// 一進來就按離開的話，不該打摘要 API、不該寫 TaskLog、更不該發羊毛。
+    private var hasRealConversation: Bool { userCount > 0 || splitEnded }
 
     var body: some View {
         NavigationStack {
@@ -55,7 +61,7 @@ struct StuckChatView: View {
         .interactiveDismissDisabled()                    // 離開一律走 STK-03 確認
         .task { await requestReply() }                   // R1 開場
         .sheet(isPresented: $showSplit) {
-            SplitFlowModal(task: task, source: .fromChat, chatContext: thread) {
+            SplitFlowModal(task: task, source: .fromChat, chatContext: thread, analysis: analysis) {
                 splitEnded = true
                 exitAndRecord()                          // 拆分完成 = 本次卡關解套結束點
             }
@@ -63,12 +69,22 @@ struct StuckChatView: View {
         .overlay {
             if showExitConfirm {
                 DimmedModal {
-                    ConfirmModal(
-                        title: "離開聊天室嗎？",
-                        message: "離開前會把這次對話整理成一段記錄，存進任務的 Task Record。",
-                        primary: ModalAction(title: "離開並記錄內容") { showExitConfirm = false; exitAndRecord() },
-                        secondary: ModalAction(title: "取消") { showExitConfirm = false }
-                    )
+                    if hasRealConversation {
+                        ConfirmModal(
+                            title: "離開聊天室嗎？",
+                            message: "離開前會把這次對話整理成一段記錄，存進任務的 Task Record。",
+                            primary: ModalAction(title: "離開並記錄內容") { showExitConfirm = false; exitAndRecord() },
+                            secondary: ModalAction(title: "取消") { showExitConfirm = false }
+                        )
+                    } else {
+                        // 還沒開口就想走：沒有東西可以摘要，直接放人
+                        ConfirmModal(
+                            title: "離開聊天室嗎？",
+                            message: "你還沒開始聊，離開不會留下任何記錄。",
+                            primary: ModalAction(title: "離開") { showExitConfirm = false; dismiss() },
+                            secondary: ModalAction(title: "取消") { showExitConfirm = false }
+                        )
+                    }
                 }
             }
             if let summary = summaryText {
@@ -196,8 +212,13 @@ struct StuckChatView: View {
                 .first?.onboardingJSON ?? "{}"
             let reply = try await AIService.shared.stuckChat(
                 task: task, round: round, messages: thread,
-                history: history, profileJSON: profile)
+                history: history, profileJSON: profile,
+                previous: analysis)
             currentReply = reply
+            if let a = reply.analysis, !a.isEmpty {
+                analysis = a
+                print("🧠 R\(round) 判讀：\(a.primary)｜\(a.hypothesis)｜信心 \(a.confidence)｜能量 \(a.energy)｜給過 \(a.tried)")
+            }
             let msg = ChatMessage(taskID: task.id, sessionID: sessionID,
                                   role: "assistant", content: reply.text)
             modelContext.insert(msg)
@@ -213,10 +234,12 @@ struct StuckChatView: View {
 
     /// STK-03「離開並記錄」→ summarize → 寫 TaskLog(chatSummary) → grant → STK-04
     private func exitAndRecord() {
+        // 保險：沒有實際互動就不留記錄也不發獎勵（避免「開了就有羊毛」的漏洞）
+        guard hasRealConversation else { dismiss(); return }
         Task {
             isLoading = true
             var summary: String
-            do { summary = try await AIService.shared.summarize(messages: thread) }
+            do { summary = try await AIService.shared.summarize(messages: thread, analysis: analysis) }
             catch { summary = "這次聊了「\(task.name)」的卡點。（AI 摘要暫時失敗，先以此記錄）" }
             if splitEnded { summary += "（此次對話最後決定將原任務拆分。）" }
 

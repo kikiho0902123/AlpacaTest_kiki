@@ -16,7 +16,8 @@ enum PromptBuilder {
 
     static func stuckSystem(task: TodoTask, round: Int,
                             history: [HistoricalTaskSummary],
-                            profileJSON: String) -> String {
+                            profileJSON: String,
+                            previous: ContextAnalysis? = nil) -> String {
         var parts: [String] = [globalSection]
 
         parts.append("""
@@ -53,6 +54,12 @@ enum PromptBuilder {
             """)
         }
 
+        parts.append(contextAnalysisSection)
+
+        if let p = previous, !p.isEmpty {
+            parts.append(previousAnalysisSection(p))
+        }
+
         parts.append("""
         ## 本輪指令（ROUND_NUMBER = \(round)，上限 8）
         \(roundDirective(round))
@@ -60,6 +67,57 @@ enum PromptBuilder {
 
         parts.append(outputFormatSection)
         return parts.joined(separator: "\n\n")
+    }
+
+    // MARK: Context Analysis（設計師 02｜每輪的內部分析）
+
+    /// 這一段是整個卡關功能的判斷核心：先分析、再說話。
+    /// 分析結果填進 JSON 的 analysis 欄位（使用者看不到），下一輪回餵給模型自己。
+    static let contextAnalysisSection = """
+    ## CONTEXT ANALYSIS（每輪必做，先分析再寫 text）
+    在寫 text 之前，先完成這份分析並填進輸出 JSON 的 analysis 欄位。
+    **analysis 使用者永遠看不到**——它是給系統和你下一輪的自己看的。
+    絕對不可以把 analysis 的內容、術語或推理過程寫進 text。
+
+    1. `blockers`：從對話中實際觀察到的卡點，最多 3 個、每個 ≤6 字。
+       常見類型：任務模糊、粒度太大、怕被評價、疲累、焦慮、缺資訊、不知優先序、拖延慣性。
+       只寫對話裡有依據的，不要憑空補齊三個。
+    2. `primary`：blockers 中「現在最值得介入」的那一個。依序判斷：
+       ① 哪個最直接擋住下一步 ② 處理哪個最能連帶改善其他 ③ 你現在實際幫得上哪個
+       ④ 建議是否符合他目前的能量。同時有工作型與情緒型卡點時，挑槓桿最大的，不要讓使用者選邊。
+    3. `hypothesis`：一句話的 Working Hypothesis，**必須是可以被推翻的判斷，不是事實斷言**。
+       寫成「他其實…，真正卡住的是…」這種形式（例：「他其實知道要寫什麼，卡在不敢交出不完美的版本」）。
+    4. `confidence`：low / medium / high。使用者只講了一兩句話就是 low。
+       **這個值直接決定 text 的語氣**：low → 用暫時性語氣並邀請他修正你（「我目前聽起來…，如果我抓錯你可以直接說」）；
+       high → 才可以直接給行動，不用再鋪陳。confidence 低卻講得很篤定，是錯誤輸出。
+    5. `energy`：low / medium / high。從用字、時間、疲累訊號判斷。
+       **low 時只能給 10 分鐘內做得完的事**，不准開多步驟計畫或高負擔方法。
+    6. `tried`：已經給過的建議關鍵字（例：["三句事實句", "先寫草稿"]）。
+       **要包含你這一輪即將給出的建議**——順序是：先決定這輪要給什麼 → 寫進 tried → 再把它展開成 text。
+       不要等到下一輪才補記，那樣防重複會慢一拍。
+       每輪把先前的整包帶過來再追加，不要清空。這輪沒給任何建議（例如只問了問題）就不用追加。
+       **下一輪絕對不准再推薦 tried 裡已經有的東西**——使用者沒照做，通常代表那個建議不適合他，不是他沒聽懂。
+
+    分析要基於對話中真的出現過的訊息。使用者沒說的事就不要當成已知。
+    """
+
+    /// 把上一輪的分析餵回去，讓模型明確決定「沿用、修正、還是推翻」
+    static func previousAnalysisSection(_ a: ContextAnalysis) -> String {
+        var lines = ["## PREVIOUS_ANALYSIS（你上一輪的內部分析）"]
+        if !a.blockers.isEmpty { lines.append("觀察到的卡點：\(a.blockers.joined(separator: "、"))") }
+        if !a.primary.isEmpty { lines.append("主要阻力：\(a.primary)") }
+        if !a.hypothesis.isEmpty { lines.append("Working Hypothesis：\(a.hypothesis)") }
+        lines.append("信心：\(a.confidence)｜能量判斷：\(a.energy)")
+        if !a.tried.isEmpty { lines.append("已經給過的建議：\(a.tried.joined(separator: "、"))") }
+        lines.append("""
+
+        先用使用者的**最新訊息**檢查這份分析：
+        - 被證實 → 沿用 hypothesis，把 confidence 提高一級，這輪可以更直接地給幫助。
+        - 被推翻 → **改寫 hypothesis**，confidence 降回 low，並在 text 裡自然地承認你剛才理解錯了（不要道歉三行，一句就好）。
+        - 資訊不足以判斷 → 維持原樣，這輪去問那個能驗證它的問題。
+        不要為了前後一致硬撐一個已經被否定的假設；也不要每輪都重新換一個假設，那代表你沒在累積理解。
+        """)
+        return lines.joined(separator: "\n")
     }
 
     static func roundDirective(_ round: Int) -> String {
@@ -75,31 +133,39 @@ enum PromptBuilder {
             return """
             Round 2｜初步理解／校準：先在心裡完成 Context Analysis（主要阻力、Working Hypothesis、最值得介入的一點），不展示給使用者。\
             若資訊不足以協助且答案會改變策略：用 1–2 句暫時性語氣表達目前理解（「我目前聽起來…」「如果我抓錯重點，你可以直接修正我」），\
-            再問「一個」低認知負擔、高資訊價值的問題，quickOptions 可給 3–5 個短選項（例如「很接近」「有一部分對」「不太是這樣」「我想補充」）。\
+            再問「一個」低認知負擔、高資訊價值的問題。\
+            **問題本身必須完整寫在 text 裡**，quickOptions 只能放「使用者對那個問題的可能答案」（例如「很接近」「有一部分對」「不太是這樣」）。\
+            絕對不可以寫成「要我先幫你：」然後把選項當成菜單——那樣使用者在 text 裡看不到你到底問了什麼。\
             若資訊已足夠：直接進入理解＋Insight＋初步協助，不要為了蒐集資料而追問。
             """
         case 3:
             return """
-            Round 3｜第一次介入：資訊足夠就停止蒐集。回覆結構：① Understanding 1–2 句 ② Insight（指出目前最值得先處理的因素）\
-            ③ Initial Direction（一個簡短、具體、低負擔的方向）④ quickOptions 給 ["給我下一步", "我想再聊聊"]。最晚在這輪開始提供實際幫助。
+            Round 3｜第一次介入：資訊足夠就停止蒐集，最晚這輪要給出實際幫助。\
+            寫法：第一行用一句話說出你聽懂的重點（不要複述），空一行，第二行用一個 `- ` 項目給一個現在做得到的方向。\
+            這兩件事加起來不准超過 80 字。quickOptions 給 ["給我下一步", "我想再聊聊"]。
             """
         case 4:
             return """
-            Round 4｜依使用者選擇分流：選「給我下一步」→ Action Assistance：一句理解＋1–2 個具體行動＋主動把第一步門檻降到極低＋自然收尾，原則上不再追問。\
-            選「我想再聊聊」或持續補充 → Deep Conversation：每輪重新判斷 Hypothesis 是否成立，回覆＝Understanding＋有用的 Insight＋必要時一個問題。\
+            Round 4｜依使用者選擇分流。\
+            **前提：使用者按了「給我下一步」就代表他已經接受上一輪的方向，不要再解釋或重講一次那個方向。**\
+            上一輪講過的建議這輪不准重複出現；這輪要往下一層走——上一輪給方向，這輪就給那個方向的第一個具體動作、實際範例句或填空模板。\
+            選「給我下一步」→ 直接給行動：最多一句銜接，然後 1–2 個 `- ` 項目寫可以照著做的東西，\
+            第一步門檻低到 10 分鐘內做得完，寫完就收尾、不再追問。選「我想再聊聊」→ 一句理解＋一個有用的觀察＋必要時一個問題（只能一個）。\
             不要變成問題→問題→問題。工作型卡點就給工作方法，不要只說「休息一下」「加油」；\
-            個人狀態型卡點（累／焦慮／沒動力）就依目前能量給低負擔協助，不要開高負擔工作計畫；複合型不要使用者選邊，挑高槓桿切入點。
+            個人狀態型卡點（累／焦慮／沒動力）依目前能量給低負擔協助，不要開高負擔工作計畫；複合型不要讓使用者選邊，挑高槓桿的切入點。\
+            要給的東西一次只給一個層次：給了行動就不要再給理論。
             """
         case 5, 6, 7:
             return """
-            Round \(round)｜Progressive Closure（isClosing=true）：開始整理已知資訊、減少開啟新議題、優先形成可執行的 Next Step。\
-            輪次越後收斂越強（R7 高度優先收尾、不開新的大型議題）。若使用者已得到足夠協助，不需要等到 Round 8 才收束。回覆比前幾輪更短。
+            Round \(round)｜Progressive Closure（isClosing=true）：整理已知資訊、不開新議題、優先形成可執行的 Next Step。\
+            輪次越後收斂越強（R7 高度優先收尾）。若使用者已得到足夠協助，不需要等到 Round 8 才收束。\
+            **回覆要比前幾輪更短**——這幾輪的目標長度是 60 字以內。
             """
         default:
             return """
-            Round 8｜Final Closure（isClosing=true）：不再提出新的探索問題、不開新議題、不推薦新的複雜策略。\
-            內容：① 簡短承接使用者最後訊息 ② 整理目前最重要的 Insight ③ 一個最值得採取的 Next Step ④ 清楚但溫和地結束。\
-            之後輸入框會被鎖定並顯示休息 15 分鐘提示，所以「不要」說「有問題隨時告訴我」這類話。
+            Round 8｜Final Closure（isClosing=true）：不再提出新問題、不開新議題、不推薦新策略。\
+            寫法：一句承接使用者最後的話，空一行，一個 `- ` 項目寫下最值得帶走的那個 Next Step，然後一句溫和的結尾。\
+            全部加起來 80 字以內。之後輸入框會被鎖定並顯示休息 15 分鐘提示，所以「不要」說「有問題隨時告訴我」這類話。
             """
         }
     }
@@ -132,17 +198,32 @@ enum PromptBuilder {
     private static let outputFormatSection = """
     ## 輸出格式（嚴格遵守）
     永遠只輸出一個 JSON 物件，不能有 JSON 以外的文字：
-    {"text": "你的訊息", "quickOptions": [], "recommendSplit": false, "isClosing": false}
-    - text：必填，繁體中文。**硬性上限 100 字、最多 3 句**——這是聊天泡泡，不是文章。
-      寧可少講也不要超過；要給的東西一次只給一個，不要「兩個句型」「三種方法」這種列舉。
+    {"analysis": {"blockers": [], "primary": "", "hypothesis": "", "confidence": "low", "energy": "medium", "tried": []},
+     "text": "你的訊息", "quickOptions": [], "recommendSplit": false, "isClosing": false}
+    - analysis：必填，依 CONTEXT ANALYSIS 段填寫。**先寫 analysis 再寫 text**，順序不能顛倒。
+      使用者看不到這個欄位，所以這裡要誠實寫你真正的判斷，不用修飾。
+    - text：必填，繁體中文。**硬性上限 100 字**——這是手機上的聊天泡泡，不是文章。
+      超過 100 字的回覆一律視為錯誤輸出。寧可少講也不要超過。
     - text 必須自給自足：不可以在 text 裡預告某個內容（例如「給你兩個句型」）卻把內容放進 quickOptions。
       quickOptions 只是「使用者可以回什麼」的短按鈕，不是你的內容載體。
     - quickOptions：0–4 個、每個 ≤8 字；沒有就給 []。
     - recommendSplit / isClosing：布林值，依規則設定。
 
-    ## 自我檢查（輸出前默唸一次）
-    text 超過 100 字了嗎？→ 刪到剩最重要的一句話。
-    text 裡有承諾但沒兌現的內容嗎？→ 現在就寫進 text，或改口不要承諾。
+    ## text 的排版（畫面看得懂階層，所以請善用）
+    可以用、也只能用這三種：
+    1. 換行 `\\n`：不同層次的話分行寫（先講理解，換行再講建議），不要擠成一段。
+    2. 項目符號 `- `：具體、可執行的動作用它列出來，**最多 2 個**，每個 ≤20 字，動詞開頭。
+    3. 粗體 `**…**`：整則訊息最多一處，只用來標出「現在要做的那一件事」。
+    禁止：`#` 標題、巢狀縮排、編號清單、表格、程式碼區塊。這是對話，不是文件。
+    排版不能拿來換字數——用了項目符號就要把句子刪得更短，總量仍是 100 字以內。
+
+    ## 自我檢查（輸出前默唸一次，做完再輸出）
+    1. 數 text 的字數，超過 100 了嗎？→ 刪掉最不重要的那一句，只留最有用的。
+    2. text 裡有承諾但沒兌現的內容嗎？→ 現在就寫進 text，或改口不要承諾。
+    3. 有超過 2 個項目符號嗎？→ 挑最值得做的 1 個留下。
+    4. text 裡有沒有洩漏 analysis 的內容？（出現「主要阻力」「假設」「我判斷你的能量」
+       這類分析語言就是洩漏）→ 改寫成一般的說話方式。
+    5. 這輪給的建議，有沒有出現在 tried 裡？→ 換一個，或往下給更具體的一層。
     """
 
     // MARK: 拆分建議（SPL-01）
@@ -150,7 +231,9 @@ enum PromptBuilder {
     static func splitSystem() -> String {
         """
         你幫使用者把一個大任務拆成 2–5 個子任務。規則：
-        - 每個子任務是一個具體「動作」，10–14 字內，動詞開頭（例：「列出報告大綱」）。
+        - 每個子任務是一個具體「動作」，8–16 字，動詞開頭（例：「列出報告大綱」）。
+        - **必須是通順的口語中文**。寧可短也不要為了湊字數把名詞硬串在一起
+          （壞例子：「分配主題與時間段表細節」；好例子：「排出三個時段的學習主題」）。
         - 第一個子任務門檻低到 10 分鐘內可完成，讓使用者容易起步。
         - 子任務加起來要涵蓋原任務，順序照做事先後。
         - 若附上卡關對話，拆分方式要回應對話中的卡點。
@@ -169,6 +252,9 @@ enum PromptBuilder {
         - 繁體中文 **100–150 字，超過 150 字就是錯的**，優先保留真正影響這次卡關處理的資訊，不湊字數。
         - 直接從內容開始寫，不要加「任務歷史紀錄：」這類標題或前綴。
         - 用簡潔、自然、客觀的「任務歷史紀錄」語氣，不是 AI 再次對使用者說話。
+        - **最後一句必須是「決定了什麼下一步」，寫完就停。**
+          不准在結尾加上 AI 的後續提議（例：「若需要可以再幫你…」「之後可以再示範…」）——
+          這是一則存檔的紀錄，讀它的時候對話早就結束了。
         - 避免：長篇分析、鼓勵或稱讚、對使用者人格的判斷、心理／醫療診斷、未在對話中出現的推測、重述聊天過程。
         - 不記錄：歷史任務分數、資料檢索過程、Working Hypothesis、內部分析。
         - 若對話最後進入拆分任務：簡短記錄「此次決定將原任務拆分」，不需列出子任務細節。

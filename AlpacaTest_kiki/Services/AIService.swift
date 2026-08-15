@@ -12,22 +12,63 @@ import SwiftData
 
 // MARK: - 契約定義的回傳型別
 
+/// Context Analysis：AI 每輪的內部分析。**永遠不顯示給使用者**。
+/// 存在聊天 session 的 @State 裡（不進資料庫），下一輪當 PREVIOUS_ANALYSIS 回餵，
+/// 讓 AI 能沿用／推翻自己上一輪的假設，而不是每輪從零重推。
+/// 也餵給拆分與摘要，讓它們知道「當時到底卡在哪」而不用重讀整段對話。
+struct ContextAnalysis: Codable, Equatable {
+    /// 觀察到的卡點，最多 3 個
+    var blockers: [String] = []
+    /// blockers 中現在最值得介入的那一個
+    var primary: String = ""
+    /// 一句話的 Working Hypothesis，可被使用者推翻
+    var hypothesis: String = ""
+    /// low / medium / high — 決定 text 要用暫時性語氣還是直接給行動
+    var confidence: String = "low"
+    /// low / medium / high — 決定建議的負擔上限
+    var energy: String = "medium"
+    /// 已經給過的建議關鍵字，跨輪累積 → 下一輪不准重複推薦
+    var tried: [String] = []
+
+    /// 空分析不值得回餵（回餵空的只會浪費 token 又干擾模型）
+    var isEmpty: Bool { primary.isEmpty && hypothesis.isEmpty && blockers.isEmpty }
+}
+
+extension ContextAnalysis {
+    private enum CodingKeys: String, CodingKey {
+        case blockers, primary, hypothesis, confidence, energy, tried
+    }
+    nonisolated init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        blockers   = (try? c.decodeIfPresent([String].self, forKey: .blockers)) ?? []
+        primary    = (try? c.decodeIfPresent(String.self, forKey: .primary)) ?? ""
+        hypothesis = (try? c.decodeIfPresent(String.self, forKey: .hypothesis)) ?? ""
+        confidence = (try? c.decodeIfPresent(String.self, forKey: .confidence)) ?? "low"
+        energy     = (try? c.decodeIfPresent(String.self, forKey: .energy)) ?? "medium"
+        tried      = (try? c.decodeIfPresent([String].self, forKey: .tried)) ?? []
+    }
+}
+
 struct StuckReply: Codable {
     var text: String                     // AI 訊息
     var quickOptions: [String] = []      // 輕量選項（很接近/有一部分對/…）
     var recommendSplit: Bool = false     // STK-02F：符合條件才 true
     var isClosing: Bool = false          // Round 5+ 收斂語氣
+    var analysis: ContextAnalysis?       // 內部分析，不顯示（見 ContextAnalysis）
 }
 
 // AI 回的 JSON 欄位可能缺漏，缺的用預設值補，不讓整包 parse 失敗
 extension StuckReply {
-    private enum CodingKeys: String, CodingKey { case text, quickOptions, recommendSplit, isClosing }
+    private enum CodingKeys: String, CodingKey {
+        case text, quickOptions, recommendSplit, isClosing, analysis
+    }
     nonisolated init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         text = try c.decode(String.self, forKey: .text)
         quickOptions = (try? c.decodeIfPresent([String].self, forKey: .quickOptions)) ?? []
         recommendSplit = (try? c.decodeIfPresent(Bool.self, forKey: .recommendSplit)) ?? false
         isClosing = (try? c.decodeIfPresent(Bool.self, forKey: .isClosing)) ?? false
+        analysis = try? c.decodeIfPresent(ContextAnalysis.self, forKey: .analysis)
     }
 }
 
@@ -47,6 +88,13 @@ enum AIConfig {
     static let model = "gpt-5-mini"
     /// var 而非 let：測試要能指向壞掉的位址驗證降級行為
     static var endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
+
+    /// gpt-5 系列的思考量。minimal ＝幾乎不思考，會忽略 prompt 裡的字數自我檢查，
+    /// 實測話變超長又抓不到重點；low 慢約 1–2 秒但守規則，聊天室用這個。
+    static let reasoningEffort = "low"
+    /// gpt-5 系列的話多程度（low/medium/high）。聊天泡泡固定 low，
+    /// 這是「字數」最直接的旋鈕，比 prompt 裡寫「100 字」有效得多。
+    static let chatVerbosity = "low"
 }
 
 enum AIServiceError: LocalizedError {
@@ -95,10 +143,13 @@ final class AIService {
 
     /// 卡關聊天。round 由呼叫端算（該 session 的 user 訊息數 + 1；R1 = AI 開場）
     /// Round 8：呼叫端鎖輸入（STK-02H）；safety 觸發不受 8 輪限制
+    /// previous：上一輪的 Context Analysis。有給就回餵，AI 會判斷假設還成不成立。
+    /// 預設 nil 保持舊呼叫方式可用（契約 §5 相容）。
     func stuckChat(task: TodoTask, round: Int,
                    messages: [ChatMessage],
                    history: [HistoricalTaskSummary],
-                   profileJSON: String) async throws -> StuckReply {
+                   profileJSON: String,
+                   previous: ContextAnalysis? = nil) async throws -> StuckReply {
 
         // 安全層：最後一句使用者訊息命中關鍵詞 → 不打 API，回固定關懷訊息
         if let last = messages.last(where: { $0.role == "user" }),
@@ -111,7 +162,8 @@ final class AIService {
         var apiMessages: [[String: String]] = [
             ["role": "system",
              "content": PromptBuilder.stuckSystem(task: task, round: round,
-                                                  history: history, profileJSON: profileJSON)]
+                                                  history: history, profileJSON: profileJSON,
+                                                  previous: previous)]
         ]
         if messages.isEmpty {
             apiMessages.append(["role": "user", "content": "（使用者剛進入聊天室，請依 Round 1 指令開場）"])
@@ -121,7 +173,10 @@ final class AIService {
 
         do {
             let raw = try await callChat(apiMessages, wantJSON: true)
-            return Self.decodeStuckReply(raw)
+            var reply = Self.decodeStuckReply(raw)
+            // tried 是防重複推薦的關鍵，不能讓模型「忘記」把上一輪的帶過來 → 程式面合併
+            reply.analysis = Self.carryForward(previous, into: reply.analysis)
+            return reply
         } catch {
             guard fallbackToMockOnFailure else { throw error }
             degrade(error, "卡關聊天")
@@ -130,7 +185,8 @@ final class AIService {
     }
 
     /// 拆分建議：2–5 個子任務名稱（SPL-01）
-    func suggestSplit(task: TodoTask, chatContext: [ChatMessage]?) async throws -> [String] {
+    func suggestSplit(task: TodoTask, chatContext: [ChatMessage]?,
+                      analysis: ContextAnalysis? = nil) async throws -> [String] {
         if useMock {
             try? await Task.sleep(nanoseconds: 500_000_000)
             return ["列出\(task.name)的三個小步驟", "先做 10 分鐘暖身", "完成第一個小段落"]
@@ -143,6 +199,12 @@ final class AIService {
                 .map { "\($0.role == "user" ? "使用者" : "AI")：\($0.content)" }
                 .joined(separator: "\n")
             user += "\n\n以下是使用者剛才的卡關對話，拆分要對症下藥：\n\(transcript)"
+        }
+        if let a = analysis, !a.isEmpty {
+            user += "\n\n這次卡關的判讀（來自對話分析，拆分請直接針對它）："
+            user += "\n主要阻力：\(a.primary)"
+            if !a.hypothesis.isEmpty { user += "\n判斷：\(a.hypothesis)" }
+            if a.energy == "low" { user += "\n注意：使用者目前能量偏低，第一個子任務要特別小。" }
         }
         do {
             let raw = try await callChat([
@@ -162,19 +224,25 @@ final class AIService {
     }
 
     /// 離開時的不可編輯 Summary（STK-04）
-    func summarize(messages: [ChatMessage]) async throws -> String {
+    func summarize(messages: [ChatMessage], analysis: ContextAnalysis? = nil) async throws -> String {
         if useMock {
             try? await Task.sleep(nanoseconds: 400_000_000)
             return "今天聊到你在這個任務上的卡點，主要是不知道從哪裡開始。我們一起找到了一個可以先動手的小步驟。累了就休息，明天再繼續就好。"
         }
-        let transcript = messages
+        var transcript = messages
             .map { "\($0.role == "user" ? "使用者" : "AI")：\($0.content)" }
             .joined(separator: "\n")
+        // 摘要要寫「當時為什麼卡住」——直接給判讀，比讓它重讀對話重猜一次準
+        if let a = analysis, !a.isEmpty {
+            transcript += "\n\n（系統判讀，供你寫『為什麼卡住』時參考，不要照抄術語）"
+            transcript += "\n主要阻力：\(a.primary)"
+            if !a.hypothesis.isEmpty { transcript += "\n判斷：\(a.hypothesis)" }
+        }
         do {
             let raw = try await callChat([
                 ["role": "system", "content": PromptBuilder.summarySystem()],
                 ["role": "user", "content": transcript]
-            ], wantJSON: false)
+            ], wantJSON: false, verbosity: "medium")   // 摘要要 100–150 字，low 會太短
             return raw.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
             guard fallbackToMockOnFailure else { throw error }
@@ -185,15 +253,19 @@ final class AIService {
 
     // MARK: - OpenAI 呼叫（含 429/5xx 退避重試 ×2：1s/3s）
 
-    private func callChat(_ messages: [[String: String]], wantJSON: Bool) async throws -> String {
+    private func callChat(_ messages: [[String: String]], wantJSON: Bool,
+                          verbosity: String = AIConfig.chatVerbosity) async throws -> String {
         let key = Secrets.openAIKey
         guard !key.isEmpty else { throw AIServiceError.missingKey }
 
         var body: [String: Any] = ["model": AIConfig.model, "messages": messages]
         if wantJSON { body["response_format"] = ["type": "json_object"] }
         // gpt-5 系列是 reasoning 模型：不送 temperature/max_tokens（會被拒），
-        // 用 reasoning_effort=minimal 換取聊天所需的低延遲
-        if AIConfig.model.hasPrefix("gpt-5") { body["reasoning_effort"] = "minimal" }
+        // 改用 reasoning_effort 控思考量、verbosity 控話長度
+        if AIConfig.model.hasPrefix("gpt-5") {
+            body["reasoning_effort"] = AIConfig.reasoningEffort
+            body["verbosity"] = verbosity
+        }
 
         var req = URLRequest(url: AIConfig.endpoint, timeoutInterval: 45)
         req.httpMethod = "POST"
@@ -240,10 +312,54 @@ final class AIService {
             .replacingOccurrences(of: "```", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if let data = cleaned.data(using: .utf8),
-           let reply = try? JSONDecoder().decode(StuckReply.self, from: data) {
+           var reply = try? JSONDecoder().decode(StuckReply.self, from: data) {
+            reply.text = trimForBubble(reply.text)
             return reply
         }
-        return StuckReply(text: raw)
+        return StuckReply(text: trimForBubble(raw))
+    }
+
+    /// 合併上一輪與這一輪的分析：`tried` 取聯集（不能因為模型漏抄就忘記給過什麼），
+    /// 其餘欄位以新的為準——假設本來就該被推翻，新的空值代表模型沒重填，才沿用舊的。
+    nonisolated static func carryForward(_ previous: ContextAnalysis?,
+                                         into current: ContextAnalysis?) -> ContextAnalysis? {
+        guard let previous, !previous.isEmpty else { return current }
+        guard var merged = current else { return previous }
+
+        var tried = previous.tried
+        for item in merged.tried where !tried.contains(item) { tried.append(item) }
+        merged.tried = tried
+
+        if merged.primary.isEmpty    { merged.primary = previous.primary }
+        if merged.hypothesis.isEmpty { merged.hypothesis = previous.hypothesis }
+        if merged.blockers.isEmpty   { merged.blockers = previous.blockers }
+        return merged
+    }
+
+    /// 字數保險絲：prompt 和 verbosity 都失手時的最後一道。
+    /// 只在超過 150 字才動手，而且切在句尾（。！？換行），不會把句子砍一半。
+    /// 保留前 3 句 —— 開頭通常是理解與 Insight，尾巴才是離題的補充。
+    nonisolated static func trimForBubble(_ text: String, limit: Int = 150) -> String {
+        guard text.count > limit else { return text }
+        var sentences: [String] = []
+        var current = ""
+        for ch in text {
+            current.append(ch)
+            if "。！？!?\n".contains(ch) {
+                sentences.append(current)
+                current = ""
+            }
+        }
+        if !current.isEmpty { sentences.append(current) }
+        guard sentences.count > 1 else { return String(text.prefix(limit)) + "…" }
+
+        var result = ""
+        for s in sentences.prefix(3) {
+            if result.count + s.count > limit && !result.isEmpty { break }
+            result += s
+        }
+        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? String(text.prefix(limit)) + "…" : trimmed
     }
 
     nonisolated static func decodeSubtasks(_ raw: String) -> [String] {

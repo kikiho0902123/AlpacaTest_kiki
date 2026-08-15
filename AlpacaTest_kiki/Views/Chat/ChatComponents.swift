@@ -32,6 +32,66 @@ enum ChatTheme {
     static let userBubble = Color(red: 0.93, green: 0.58, blue: 0.30).opacity(0.25)
 }
 
+// MARK: - 輕量 Markdown 渲染
+
+/// SwiftUI 的 Text 只有「字面值」會被當 Markdown 解析，變數不會；
+/// 而且就算解析了也只支援行內樣式（粗體／斜體／連結），沒有項目符號和換行階層。
+/// 所以這裡自己拆行：`- ` 開頭畫成有縮排的項目，其餘走行內 Markdown。
+/// 支援範圍刻意很窄（換行、`- `、`**粗體**`）——跟 PromptBuilder 允許 AI 用的排版一致。
+struct MarkdownText: View {
+    let raw: String
+
+    private enum Block: Identifiable {
+        case paragraph(String)
+        case bullet(String)
+        var id: String {
+            switch self {
+            case .paragraph(let s): return "p\(s)"
+            case .bullet(let s):    return "b\(s)"
+            }
+        }
+    }
+
+    private var blocks: [Block] {
+        raw.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .map { line in
+                for marker in ["- ", "• ", "* "] where line.hasPrefix(marker) {
+                    return .bullet(String(line.dropFirst(marker.count)))
+                }
+                return .paragraph(line)
+            }
+    }
+
+    /// 行內樣式。inlineOnlyPreservingWhitespace：只解析粗體之類，不吃掉空白排版。
+    private func inline(_ s: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: s,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
+        ) ?? AttributedString(s)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(blocks) { block in
+                switch block {
+                case .paragraph(let s):
+                    Text(inline(s))
+                        .fixedSize(horizontal: false, vertical: true)
+                case .bullet(let s):
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("•").foregroundStyle(ChatTheme.terracotta)
+                        Text(inline(s))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.leading, 2)
+                }
+            }
+        }
+    }
+}
+
 // MARK: - 對話泡泡
 
 struct ChatBubble: View {
@@ -43,9 +103,10 @@ struct ChatBubble: View {
     var body: some View {
         HStack {
             if isUser { Spacer(minLength: 40) }
-            Text(text)
+            MarkdownText(raw: text)
                 .font(.subheadline)
                 .foregroundStyle(ChatTheme.brown)
+                .multilineTextAlignment(.leading)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(
@@ -170,7 +231,7 @@ struct SummaryModal: View {
             VStack(spacing: 14) {
                 Text("對話記錄").font(.headline)
                 ScrollView {
-                    Text(text)
+                    MarkdownText(raw: text)
                         .font(.subheadline)
                         .foregroundStyle(ChatTheme.brown)
                         .frame(maxWidth: .infinity, alignment: .leading)

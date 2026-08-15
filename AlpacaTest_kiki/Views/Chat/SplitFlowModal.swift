@@ -21,6 +21,8 @@ struct SplitFlowModal: View {
     let task: TodoTask
     let source: SplitSource
     var chatContext: [ChatMessage]? = nil
+    /// 從卡關聊天進來時帶入的內部判讀，讓拆分直接針對卡點（見 ContextAnalysis）
+    var analysis: ContextAnalysis? = nil
     var onFinished: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
@@ -159,7 +161,7 @@ struct SplitFlowModal: View {
 
     private func loadSuggestions() async {
         do {
-            let names = try await AIService.shared.suggestSplit(task: task, chatContext: chatContext)
+            let names = try await AIService.shared.suggestSplit(task: task, chatContext: chatContext, analysis: analysis)
             rows = names.map { Row(text: $0) }
         } catch {
             rows = [Row(text: "把「\(task.name)」列出具體步驟"),
