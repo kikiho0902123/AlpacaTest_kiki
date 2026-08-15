@@ -164,6 +164,20 @@ struct StuckChatView: View {
                 .font(.subheadline)
             }
 
+            // §04：R5–7 若已經得到足夠協助，不需要硬撐到 R8。
+            // AI 判斷 readyToClose 就給一個明確的出口，但不強制——使用者想繼續聊還是可以。
+            if currentReply?.analysis?.readyToClose == true,
+               !isLocked, !isLoading, !splitEnded {
+                Button {
+                    showExitConfirm = true
+                } label: {
+                    Label("這次先到這裡", systemImage: "leaf.fill")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .tint(ChatTheme.brown)
+            }
+
             // R2+ 輕量選項（點了直接送出）
             if let opts = currentReply?.quickOptions, !opts.isEmpty,
                userCount > 0, !isLocked, !isLoading {
@@ -233,7 +247,11 @@ struct StuckChatView: View {
             currentReply = reply
             if let a = reply.analysis, !a.isEmpty {
                 analysis = a
-                print("🧠 R\(round) 判讀：\(a.primary)｜\(a.hypothesis)｜信心 \(a.confidence)｜能量 \(a.energy)｜給過 \(a.tried)")
+                print("🧠 R\(round) [\(a.mode)] \(a.primary)｜\(a.hypothesis)")
+                print("   信心 \(a.confidence)｜能量 \(a.energy)｜拆分 \(a.splitRelevance)｜可收束 \(a.readyToClose)")
+                print("   給過 \(a.tried)"
+                      + (a.effectiveMethods.isEmpty ? "" : "｜過去有效 \(a.effectiveMethods)")
+                      + (a.avoidRecommending.isEmpty ? "" : "｜避免 \(a.avoidRecommending)"))
             }
             let msg = ChatMessage(taskID: task.id, sessionID: sessionID,
                                   role: "assistant", content: reply.text)

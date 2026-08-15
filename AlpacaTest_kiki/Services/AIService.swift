@@ -30,13 +30,61 @@ struct ContextAnalysis: Codable, Equatable {
     /// 已經給過的建議關鍵字，跨輪累積 → 下一輪不准重複推薦
     var tried: [String] = []
 
+    // MARK: 設計師 §04 Routing —— 這些是「跨輪要記住」的狀態
+
+    /// 目前的 Conversation Mode（§04 的 route）。**這是狀態，不是每輪重算的**：
+    /// 使用者按了「給我下一步」進入 directNextStep 之後，之後每輪都該待在那個模式，
+    /// 不能又飄回追問。空字串＝還沒決定。
+    var mode: String = ""
+    /// §02 Step 7：資訊是否不足以提供實際幫助
+    var needClarification: Bool = false
+    /// needClarification 為 true 時，那個唯一值得問的問題
+    var clarificationQuestion: String = ""
+    /// §02：拆分相關性是三值，不是布林。possible 不得主動推薦。
+    /// recommended / possible / not_relevant
+    var splitRelevance: String = "not_relevant"
+    /// 拆分理由（內部用）
+    var splitReason: String = ""
+    /// §02 Step 4：過去對「這位使用者」真正有效的方法，最多 2 個。
+    /// spec 明講這要優先於泛用 productivity tips。
+    var effectiveMethods: [String] = []
+    /// §02 Step 5：使用者明確表示不希望收到的方法，不得推薦
+    var avoidRecommending: [String] = []
+    /// §04：R5–7 已經得到足夠協助，不需要等到 R8 才收束
+    var readyToClose: Bool = false
+
     /// 空分析不值得回餵（回餵空的只會浪費 token 又干擾模型）
     var isEmpty: Bool { primary.isEmpty && hypothesis.isEmpty && blockers.isEmpty }
+}
+
+/// §04 的 route 名稱。用字串而非 enum，因為模型填錯值時不該讓整包 parse 失敗。
+enum ChatMode {
+    static let clarification     = "clarification"
+    static let initialAssistance = "initial_assistance"
+    static let directNextStep    = "direct_next_step"
+    static let deepConversation  = "deep_conversation"
+    static let progressiveClosure = "progressive_closure"
+    static let finalClosure      = "final_closure"
+
+    /// 中文說明，注入 prompt 用
+    static func label(_ mode: String) -> String {
+        switch mode {
+        case clarification:      return "clarification（還在釐清，只能問一個問題）"
+        case initialAssistance:  return "initial_assistance（已開始提供實際協助）"
+        case directNextStep:     return "direct_next_step（使用者要的是具體行動，不要再追問）"
+        case deepConversation:   return "deep_conversation（使用者想再聊，但每輪都要推進）"
+        case progressiveClosure: return "progressive_closure（開始收斂）"
+        case finalClosure:       return "final_closure（最後一輪）"
+        default:                 return mode
+        }
+    }
 }
 
 extension ContextAnalysis {
     private enum CodingKeys: String, CodingKey {
         case blockers, primary, hypothesis, confidence, energy, tried
+        case mode, needClarification, clarificationQuestion
+        case splitRelevance, splitReason, effectiveMethods, avoidRecommending, readyToClose
     }
     nonisolated init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -46,6 +94,14 @@ extension ContextAnalysis {
         confidence = (try? c.decodeIfPresent(String.self, forKey: .confidence)) ?? "low"
         energy     = (try? c.decodeIfPresent(String.self, forKey: .energy)) ?? "medium"
         tried      = (try? c.decodeIfPresent([String].self, forKey: .tried)) ?? []
+        mode       = (try? c.decodeIfPresent(String.self, forKey: .mode)) ?? ""
+        needClarification = (try? c.decodeIfPresent(Bool.self, forKey: .needClarification)) ?? false
+        clarificationQuestion = (try? c.decodeIfPresent(String.self, forKey: .clarificationQuestion)) ?? ""
+        splitRelevance = (try? c.decodeIfPresent(String.self, forKey: .splitRelevance)) ?? "not_relevant"
+        splitReason    = (try? c.decodeIfPresent(String.self, forKey: .splitReason)) ?? ""
+        effectiveMethods  = (try? c.decodeIfPresent([String].self, forKey: .effectiveMethods)) ?? []
+        avoidRecommending = (try? c.decodeIfPresent([String].self, forKey: .avoidRecommending)) ?? []
+        readyToClose = (try? c.decodeIfPresent(Bool.self, forKey: .readyToClose)) ?? false
     }
 }
 
@@ -197,6 +253,11 @@ final class AIService {
             var reply = Self.decodeStuckReply(raw)
             // tried 是防重複推薦的關鍵，不能讓模型「忘記」把上一輪的帶過來 → 程式面合併
             reply.analysis = Self.carryForward(previous, into: reply.analysis)
+            // §02 拆分是三值：只有 recommended 才推薦。possible 不得主動推薦，
+            // 所以這裡以 analysis 為準覆寫掉模型自己填的那顆 bool。
+            if let relevance = reply.analysis?.splitRelevance, !relevance.isEmpty {
+                reply.recommendSplit = relevance == "recommended"
+            }
             return reply
         } catch {
             guard fallbackToMockOnFailure else { throw error }
@@ -214,7 +275,12 @@ final class AIService {
         }
         var user = "任務名稱：\(task.name)\n複雜度：\(["易","中","難"][max(0, min(task.complexity, 2))])"
         if let cat = task.category { user += "\n分類：\(cat)" }
-        if let note = task.note, !note.isEmpty { user += "\n備註：\(note)" }
+        // 狀況備註是使用者自己寫的卡點描述 —— 拆分要針對它，不是泛泛拆一個任務名稱
+        if let note = task.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            user += "\n\n使用者自己寫的狀況備註（最重要的線索）：「\(note)」"
+            user += "\n拆出來的子任務必須回應這段備註裡的卡點。"
+            user += "他寫「不知道從哪開始」就把第一步縮到極小；寫「太多細節」就先拆出釐清範圍的步驟。"
+        }
         if let chat = chatContext, !chat.isEmpty {
             let transcript = chat.suffix(12)
                 .map { "\($0.role == "user" ? "使用者" : "AI")：\($0.content)" }
@@ -356,6 +422,12 @@ final class AIService {
         if merged.primary.isEmpty    { merged.primary = previous.primary }
         if merged.hypothesis.isEmpty { merged.hypothesis = previous.hypothesis }
         if merged.blockers.isEmpty   { merged.blockers = previous.blockers }
+        // mode 是狀態不是每輪重算：模型沒填就沿用，否則使用者一按「給我下一步」
+        // 下一輪就又飄回追問模式（§04 明講 direct_next_step 原則上不再探索型追問）
+        if merged.mode.isEmpty { merged.mode = previous.mode }
+        // 這兩個是「關於使用者的長期事實」，一旦問出來就不該消失
+        if merged.effectiveMethods.isEmpty  { merged.effectiveMethods = previous.effectiveMethods }
+        if merged.avoidRecommending.isEmpty { merged.avoidRecommending = previous.avoidRecommending }
         return merged
     }
 
