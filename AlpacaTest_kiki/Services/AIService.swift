@@ -78,7 +78,10 @@ enum SafetyGate {
 @MainActor
 final class AIService {
     static let shared = AIService()
-    var useMock = true                   // 串通真 API 前保持 true；也是離線 demo 模式
+    /// 有 key 就走真 API（已驗證 gpt-5-mini 可用），沒 key 自動走離線罐頭。
+    /// 這樣 A/B 不用設定就能開發，C 和 demo 機器則自動接真 AI。
+    /// 現場網路掛掉時：手動設成 true 即可完整離線 demo。
+    var useMock = Secrets.openAIKey.isEmpty
 
     /// 卡關聊天。round 由呼叫端算（該 session 的 user 訊息數 + 1；R1 = AI 開場）
     /// Round 8：呼叫端鎖輸入（STK-02H）；safety 觸發不受 8 輪限制
