@@ -3,8 +3,9 @@
 //  AlpacaTest_kiki
 //
 //  Action task card (TOD-03). Owned by A.
-//  Phase 1: minimal migration onto TodoTask + RewardEngine/events.
-//  TODO(Phase 3): StartAskSplitModal (TOD-04), Stuck entry (STK-01), record sheet, split-parent variant.
+//  Step 1: working minimum — blocks B (History variant) and C (SplitFlowModal subtask cards).
+//  Deferred: must-today tag, subcategory line, split-parent variant, visual polish.
+//  Empty buttons (拆分 / 卡住了 / …) print() only — wired in Step 4.
 //
 
 import SwiftUI
@@ -14,63 +15,87 @@ struct TaskCardView: View {
     @Bindable var task: TodoTask
     @Environment(\.modelContext) private var modelContext
 
-    private var isDone: Bool    { task.status == "done" }
     private var isStarted: Bool { task.status != "notStarted" }
+    private var isDone: Bool    { task.status == "done" }
+
+    // 分類色條：優先用 task.colorHex，否則回退主題強調色
+    private var categoryColor: Color {
+        if let hex = task.colorHex, let color = Color(hex: hex) { return color }
+        return .alpacaTerracotta
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // 名稱 + 閃電 + 電量圖示
-            HStack(alignment: .top) {
-                Text(task.name)
-                    .font(.alpacaHeading)
-                    .foregroundStyle(Color.alpacaBrown)
-                    .strikethrough(isDone)
+        HStack(spacing: 12) {
+            // 1. 分類色條
+            RoundedRectangle(cornerRadius: 3)
+                .fill(categoryColor)
+                .frame(width: 5)
 
-                Spacer()
+            VStack(alignment: .leading, spacing: 12) {
+                // 名稱 + 電量圖示
+                HStack(alignment: .top) {
+                    Text(task.name)
+                        .font(.alpacaHeading)
+                        .foregroundStyle(Color.alpacaBrown)
+                        .strikethrough(isDone)
 
-                HStack(spacing: 8) {
-                    if task.isMustToday {
-                        Image(systemName: "bolt.fill")
-                            .foregroundStyle(Color.alpacaOrange)
-                    }
+                    Spacer()
+
                     ComplexityBattery(complexity: task.complexity)
                 }
-            }
 
-            if let category = task.category {
-                TagChip(text: category)
-            }
+                // 可拉的進度條：手動回報完成度（COM-02，百分比保留）
+                VStack(alignment: .leading, spacing: 4) {
+                    Slider(value: $task.progress, in: 0...1, step: 0.01)
+                        .tint(isDone ? Color.alpacaGreen : Color.alpacaTerracotta)
+                        .disabled(isDone)
 
-            // 可拉的進度條：手動回報完成度
-            VStack(alignment: .leading, spacing: 4) {
-                Slider(value: $task.progress, in: 0...1, step: 0.01)
-                    .tint(isDone ? Color.alpacaGreen : Color.alpacaTerracotta)
+                    Text("完成度 \(Int(task.progress * 100))%")
+                        .font(.alpacaCaption)
+                        .foregroundStyle(.secondary)
+                }
+
+                // 操作按鈕列
+                HStack(spacing: 10) {
+                    // 主要按鈕：開始 →（開始後）拆分
+                    Button(action: primaryAction) {
+                        Label(isStarted ? "拆分" : "開始",
+                              systemImage: isStarted ? "square.split.2x2" : "play.fill")
+                            .font(.subheadline)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(Color.alpacaBrown)
                     .disabled(isDone)
 
-                Text("完成度 \(Int(task.progress * 100))%")
-                    .font(.alpacaCaption)
-                    .foregroundStyle(.secondary)
-            }
+                    Button(action: complete) {
+                        Label("完成", systemImage: "checkmark")
+                            .font(.subheadline)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.alpacaGreen)
+                    .disabled(isDone)
 
-            // 操作按鈕列：開始 / 完成
-            HStack(spacing: 10) {
-                Button(action: start) {
-                    Label("開始", systemImage: "play.fill")
-                        .font(.subheadline)
+                    Spacer()
+
+                    Button {
+                        print("卡住了 tapped — TODO Step 4 (StuckConfirmModal)")
+                    } label: {
+                        Label("卡住了", systemImage: "hand.raised.fill")
+                            .font(.subheadline)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(Color.alpacaStuck)
+                    .disabled(isDone)
+
+                    Button {
+                        print("… menu tapped — TODO Step 4 (Edit / Delete / View record)")
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.subheadline)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(Color.alpacaBrown)
                 }
-                .buttonStyle(.bordered)
-                .tint(Color.alpacaBrown)
-                .disabled(isStarted)
-
-                Button(action: complete) {
-                    Label("完成", systemImage: "checkmark")
-                        .font(.subheadline)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color.alpacaGreen)
-                .disabled(isDone)
-
-                Spacer()
             }
         }
         .padding()
@@ -84,9 +109,24 @@ struct TaskCardView: View {
         )
         .opacity(isDone ? 0.6 : 1.0)
         .animation(.easeInOut, value: task.status)
+        // 進度拉到 1.0 也視為完成 → 交給 B 的完成流程
+        // isDone 檔掉重複發送：CompletionView.finish() 會把 progress 寫成 1.0，
+        // 那次寫入同樣會觸發這個 onChange，若不擋就會二次發 .taskCompleted（重複發羊毛）。
+        .onChange(of: task.progress) { oldValue, newValue in
+            guard !isDone else { return }
+            if oldValue < 1.0 && newValue >= 1.0 { postCompleted() }
+        }
     }
 
     // MARK: - Actions
+
+    private func primaryAction() {
+        if isStarted {
+            print("拆分 tapped — TODO Step 4 (SplitFlowModal source: .manual)")
+        } else {
+            start()
+        }
+    }
 
     private func start() {
         task.status = "started"
@@ -95,17 +135,37 @@ struct TaskCardView: View {
         RewardEngine.grant(task.parentID != nil ? .startSubtask : .startTask, context: modelContext)
     }
 
+    /// Complete ONLY posts the event. B's flow (TOD-05 confirm → TOD-06 note)
+    /// owns the status="done" transition and the .complete reward.
     private func complete() {
+        postCompleted()
+    }
+
+    private func postCompleted() {
         NotificationCenter.default.post(name: .taskCompleted, object: task.id)
     }
 }
 
 #Preview {
-    let task = TodoTask(name: "整理書桌")
-    task.isMustToday = true
-    task.complexity = 1
-    return TaskCardView(task: task)
+    let notStarted = TodoTask(name: "整理書桌")
+    notStarted.category = "生活"
+    notStarted.colorHex = "#D9733F"
+    notStarted.complexity = 1
+
+    let started = TodoTask(name: "讀日文三小時")
+    started.category = "學習"
+    started.colorHex = "#6B8E5A"
+    started.complexity = 2
+    started.status = "started"
+    started.progress = 0.2
+
+    return ScrollView {
+        VStack(spacing: 16) {
+            TaskCardView(task: notStarted)
+            TaskCardView(task: started)
+        }
         .padding()
-        .background(Color.alpacaCream)
-        .modelContainer(for: TodoTask.self, inMemory: true)
+    }
+    .background(Color.alpacaCream)
+    .modelContainer(for: TodoTask.self, inMemory: true)
 }

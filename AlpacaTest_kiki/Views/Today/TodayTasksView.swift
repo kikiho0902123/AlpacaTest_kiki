@@ -22,6 +22,18 @@ struct TodayTasksView: View {
     @State private var completingTaskID: UUID?
     @State private var eodRequest: EODRequest?
 
+    // MARK: - Dev flags (remove/flip before shipping)
+
+    /// EOD-01 requires the island to be ALWAYS VISIBLE during development.
+    /// B's time gate (`eodReminderMinutes`, default 21:00) hides it during daytime
+    /// rehearsals. Set to false to restore the real time-of-day behaviour.
+    private static let alwaysShowEODIslandInDev = true
+
+    /// EOD-02B/08 auto-rollover is Batch 3 scope (TEAM_PLAN §0), and it writes to the
+    /// model from `.task` — i.e. on every appearance of the Today tab — so it can
+    /// silently close a DailyStat mid-demo. Off until after the demo.
+    private static let autoRolloverEnabled = false
+
     private var calendar: Calendar { Calendar.current }
 
     // 未完成在前，已完成在後
@@ -40,7 +52,8 @@ struct TodayTasksView: View {
     }
 
     private var shouldShowEODIsland: Bool {
-        notificationsEnabled && currentMinutes >= eodReminderMinutes
+        guard notificationsEnabled else { return false }
+        return Self.alwaysShowEODIslandInDev || currentMinutes >= eodReminderMinutes
     }
 
     private var currentMinutes: Int {
@@ -178,6 +191,8 @@ struct TodayTasksView: View {
     }
 
     private func openAutoRolloverIfNeeded() {
+        guard Self.autoRolloverEnabled else { return }
+
         let hour = calendar.component(.hour, from: Date())
         guard hour >= 5 else { return }
         guard eodRequest == nil else { return }

@@ -19,6 +19,23 @@ extension Color {
     static let alpacaGreen       = Theme.surfaceLeaf
 }
 
+extension Color {
+    /// Creates a color from a hex string ("#RRGGBB" or "RRGGBB"). Returns nil if malformed.
+    /// Implementation from B (was a private copy in DailyFeedbackView); hoisted here so the
+    /// whole module shares one declaration — TaskCardView and DailyFeedbackView both use it.
+    init?(hex: String) {
+        let trimmed = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        guard trimmed.count == 6, let value = Int(trimmed, radix: 16) else {
+            return nil
+        }
+
+        let red = Double((value >> 16) & 0xFF) / 255.0
+        let green = Double((value >> 8) & 0xFF) / 255.0
+        let blue = Double(value & 0xFF) / 255.0
+        self.init(red: red, green: green, blue: blue)
+    }
+}
+
 // MARK: - Type scale
 
 extension Font {
