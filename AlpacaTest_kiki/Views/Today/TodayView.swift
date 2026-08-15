@@ -1,18 +1,21 @@
 //
-//  TodayTasksView.swift
+//  TodayView.swift
 //  AlpacaTest_kiki
 //
 //  Today main screen (TOD-01). Owned by A.
-//  Phase 1: minimal migration onto TodoTask.
-//  TODO(Phase 2): rename to TodayView, extract AlpacaStatusView (image only, no numbers — STATE-09),
-//  three groups (To-do / Split / Done).
+//  Step 2: date heading, today-only query sorted by sortOrder, three sections
+//  (待辦 / 已拆分 / 已完成), alpaca extracted to AlpacaStatusView (STATE-09).
+//
+//  B's mechanisms are preserved as-is and built on top of, not rewritten:
+//  EOD island (EOD-01), .taskCompleted → CompletionView listener, auto-rollover.
 //
 
 import SwiftUI
 import SwiftData
 
-struct TodayTasksView: View {
-    @Query(sort: \TodoTask.createdAt) private var allTasks: [TodoTask]
+struct TodayView: View {
+    @Query(filter: TodayView.todayPredicate(), sort: \TodoTask.sortOrder)
+    private var todayTasks: [TodoTask]
     @Query(sort: \DailyStat.date) private var allStats: [DailyStat]
     @Environment(\.modelContext) private var modelContext
     @AppStorage("home.notificationsEnabled") private var notificationsEnabled = true
@@ -22,30 +25,72 @@ struct TodayTasksView: View {
     @State private var completingTaskID: UUID?
     @State private var eodRequest: EODRequest?
 
+    // MARK: - Dev flags (remove/flip before shipping)
+
+    /// EOD-01 requires the island to be ALWAYS VISIBLE during development.
+    /// B's time gate (`eodReminderMinutes`, default 21:00) hides it during daytime
+    /// rehearsals. Set to false to restore the real time-of-day behaviour.
+    private static let alwaysShowEODIslandInDev = true
+
+    /// EOD-02B/08 auto-rollover is Batch 3 scope (TEAM_PLAN §0), and it writes to the
+    /// model from `.task` — i.e. on every appearance of the Today tab — so it can
+    /// silently close a DailyStat mid-demo. Off until after the demo.
+    private static let autoRolloverEnabled = false
+
     private var calendar: Calendar { Calendar.current }
 
-    // 未完成在前，已完成在後
-    private var sortedTasks: [TodoTask] {
-        allTasks.sorted { lhs, rhs in
-            let lDone = lhs.status == "done"
-            let rDone = rhs.status == "done"
-            if lDone != rDone { return !lDone }
-            return lhs.createdAt < rhs.createdAt
+    // MARK: - Today's window
+
+    /// Today's tasks only: `startDate` inside [startOfDay, startOfTomorrow).
+    /// C's split subtasks inherit the parent's `startDate`, so they land here too.
+    private static func todayPredicate() -> Predicate<TodoTask> {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: .now)
+        let end = cal.date(byAdding: .day, value: 1, to: start) ?? start
+
+        return #Predicate<TodoTask> { task in
+            if let startDate = task.startDate {
+                startDate >= start && startDate < end
+            } else {
+                false
+            }
         }
     }
 
-    private var completingTask: TodoTask? {
-        guard let completingTaskID else { return nil }
-        return allTasks.first { $0.id == completingTaskID }
+    // MARK: - Sections (TOD-01)
+
+    private var todoTasks: [TodoTask] {
+        todayTasks.filter { $0.status == "notStarted" || $0.status == "started" }
+    }
+
+    private var splitTasks: [TodoTask] {
+        todayTasks.filter { $0.status == "split" }
+    }
+
+    private var doneTasks: [TodoTask] {
+        todayTasks.filter { $0.status == "done" }
+    }
+
+    private var dateHeading: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_Hant_TW")
+        formatter.dateFormat = "M月d日 EEEE"
+        return formatter.string(from: Date())
     }
 
     private var shouldShowEODIsland: Bool {
-        notificationsEnabled && currentMinutes >= eodReminderMinutes
+        guard notificationsEnabled else { return false }
+        return Self.alwaysShowEODIslandInDev || currentMinutes >= eodReminderMinutes
     }
 
     private var currentMinutes: Int {
         let components = calendar.dateComponents([.hour, .minute], from: Date())
         return (components.hour ?? 0) * 60 + (components.minute ?? 0)
+    }
+
+    private var completingTask: TodoTask? {
+        guard let completingTaskID else { return nil }
+        return todayTasks.first { $0.id == completingTaskID }
     }
 
     var body: some View {
@@ -55,21 +100,17 @@ struct TodayTasksView: View {
 
                 ScrollView {
                     VStack(spacing: 16) {
-                        // AlpacaStatusView placeholder — image only, NO numbers, NO caption (STATE-09).
-                        Image(systemName: "pawprint.circle.fill")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 120, height: 120)
-                            .foregroundStyle(Color.alpacaOrange)
-                            .padding(.top, 12)
-                            .frame(maxWidth: .infinity)
+                        header
+
+                        // 羊駝只有圖，沒有數字、沒有文案（STATE-09）
+                        AlpacaStatusView()
 
                         if shouldShowEODIsland {
                             eodIsland
                                 .padding(.horizontal)
                         }
 
-                        if sortedTasks.isEmpty {
+                        if todayTasks.isEmpty {
                             Text("今天還沒有任務，點右下角加號新增一個吧！")
                                 .multilineTextAlignment(.center)
                                 .foregroundStyle(.secondary)
@@ -77,13 +118,13 @@ struct TodayTasksView: View {
                                 .padding(.horizontal, 32)
                                 .frame(maxWidth: .infinity)
                         } else {
-                            ForEach(sortedTasks) { task in
-                                TaskCardView(task: task)
-                                    .padding(.horizontal)
-                            }
+                            section(title: "待辦", tasks: todoTasks)
+                            section(title: "已拆分", tasks: splitTasks)
+                            section(title: "已完成", tasks: doneTasks)
                         }
 
-                        Spacer(minLength: 80)
+                        // 讓最後一張卡不被右下角浮動「＋」蓋住（＋ 高 56 + 下緣 20）
+                        Spacer(minLength: 140)
                     }
                 }
 
@@ -101,6 +142,7 @@ struct TodayTasksView: View {
                 .padding(.bottom, 20)
             }
             .navigationTitle("今日任務")
+            .navigationBarTitleDisplayMode(.inline)
         }
         .sheet(isPresented: $showAddSheet) {
             AddTaskView()
@@ -130,6 +172,44 @@ struct TodayTasksView: View {
         }
         .task {
             openAutoRolloverIfNeeded()
+        }
+    }
+
+    // MARK: - Pieces
+
+    private var header: some View {
+        HStack {
+            Text(dateHeading)
+                .font(.alpacaTitle)
+                .foregroundStyle(Color.alpacaBrown)
+
+            Spacer()
+
+            // TOD-02 DatePickerModal 是 Batch 2；現在只是圖示，不開任何東西
+            Image(systemName: "calendar")
+                .font(.title3)
+                .foregroundStyle(Color.alpacaBrown.opacity(0.6))
+        }
+        .padding(.horizontal)
+        .padding(.top, 8)
+    }
+
+    @ViewBuilder
+    private func section(title: String, tasks: [TodoTask]) -> some View {
+        if !tasks.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(title)
+                    .font(Theme.sectionTitleFont)
+                    .foregroundStyle(Color.alpacaBrown.opacity(0.75))
+                    .padding(.horizontal)
+
+                ForEach(tasks) { task in
+                    TaskCardView(task: task)
+                        .padding(.horizontal)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 4)
         }
     }
 
@@ -178,6 +258,8 @@ struct TodayTasksView: View {
     }
 
     private func openAutoRolloverIfNeeded() {
+        guard Self.autoRolloverEnabled else { return }
+
         let hour = calendar.component(.hour, from: Date())
         guard hour >= 5 else { return }
         guard eodRequest == nil else { return }
@@ -199,13 +281,7 @@ struct TodayTasksView: View {
     }
 }
 
-struct EODRequest: Identifiable {
-    let id = UUID()
-    let date: Date
-    let isAutoRollover: Bool
-}
-
 #Preview {
-    TodayTasksView()
+    TodayView()
         .modelContainer(for: [TodoTask.self, TaskLog.self, ChatMessage.self, DailyStat.self, UserProfile.self], inMemory: true)
 }
