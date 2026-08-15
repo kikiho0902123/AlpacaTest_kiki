@@ -3,9 +3,9 @@
 //  AlpacaTest_kiki
 //
 //  Minimal task creator. Owned by A.
-//  Phase 1: migrated onto TodoTask (name + must-today + complexity).
-//  TODO(Phase 2): rename to TaskEditorView (shared create/edit, COM-04), 3-state date (TSK-02),
-//  inline category/subcategory creation, context note.
+//  Step 3: 加上 TSK-02 的三種日期狀態（指定日期／未排但緊急／未排不緊急）。
+//  TODO(Batch 2): rename to TaskEditorView (shared create/edit, COM-04),
+//  inline category/subcategory creation, context note, edit-mode prefill.
 //
 
 import SwiftUI
@@ -15,9 +15,27 @@ struct AddTaskView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
+    /// TSK-02 的三種日期狀態。對應 Models 的規則：
+    /// startDate 有值 = 已排程；nil + isUrgent = 未排但緊急；nil + !isUrgent = 未排不緊急。
+    private enum DateState: Int, CaseIterable {
+        case scheduled          // 指定日期
+        case unscheduledUrgent  // 未排日期但緊急
+        case unscheduledLater   // 未排日期不緊急
+
+        var label: String {
+            switch self {
+            case .scheduled:         return "指定日期"
+            case .unscheduledUrgent: return "未排・緊急"
+            case .unscheduledLater:  return "未排・不急"
+            }
+        }
+    }
+
     @State private var name: String = ""
     @State private var isMustToday: Bool = false
     @State private var complexity: Int = 0        // 0 easy / 1 medium / 2 hard
+    @State private var dateState: DateState = .scheduled
+    @State private var startDate: Date = Calendar.current.startOfDay(for: .now)
 
     private let complexityLabels = ["簡單", "中等", "困難"]
 
@@ -26,6 +44,23 @@ struct AddTaskView: View {
             Form {
                 Section("任務名稱") {
                     TextField("例如：整理書桌", text: $name)
+                }
+
+                Section("日期") {
+                    Picker("日期狀態", selection: $dateState) {
+                        ForEach(DateState.allCases, id: \.self) { state in
+                            Text(state.label).tag(state)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    // 只有「指定日期」才顯示日曆
+                    if dateState == .scheduled {
+                        DatePicker("開始日期",
+                                   selection: $startDate,
+                                   in: Calendar.current.startOfDay(for: .now)...,
+                                   displayedComponents: .date)
+                    }
                 }
 
                 Section("設定") {
@@ -49,9 +84,20 @@ struct AddTaskView: View {
                         let newTask = TodoTask(name: name)
                         newTask.isMustToday = isMustToday
                         newTask.complexity = complexity
-                        // TodayView 只查詢今天的任務；沒有日期的任務不會出現在首頁。
-                        // Step 3 的 TaskEditorView 會換成 TSK-02 的三種日期狀態選擇。
-                        newTask.startDate = Calendar.current.startOfDay(for: .now)
+
+                        // TSK-02：三種狀態只靠 startDate / isUrgent 兩個欄位表達
+                        switch dateState {
+                        case .scheduled:
+                            newTask.startDate = Calendar.current.startOfDay(for: startDate)
+                            newTask.isUrgent = false
+                        case .unscheduledUrgent:
+                            newTask.startDate = nil
+                            newTask.isUrgent = true
+                        case .unscheduledLater:
+                            newTask.startDate = nil
+                            newTask.isUrgent = false
+                        }
+
                         modelContext.insert(newTask)
                         dismiss()
                     }
