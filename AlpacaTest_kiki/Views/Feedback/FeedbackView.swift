@@ -100,8 +100,12 @@ struct FeedbackView: View {
         .onAppear {
             refreshLiveTodayWool()
         }
-        .onChange(of: todayWool) { _, newValue in
-            liveTodayWool = newValue
+        // 整包重新取，不要只更新羊毛數。收割後會換一筆新的工作日（woolG 歸 0），
+        // 羊駝的階段也要跟著重新讀，否則畫面會停在收割前的滿階。
+        .onChange(of: todayWool) { _, _ in
+            withAnimation(.easeInOut(duration: 0.25)) {
+                refreshLiveTodayWool()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .woolGained)) { notification in
             if let totalToday = notification.userInfo?["totalToday"] as? Int {

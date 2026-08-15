@@ -28,22 +28,17 @@ import UIKit
 struct AlpacaStatusView: View {
     @Query(sort: \DailyStat.date) private var allStats: [DailyStat]
 
-    /// 當日發放次數，跨 view 重建（切分頁、關 sheet）都要留著，
-    /// 否則羊駝會被打回光溜溜的 alpaca_0。
-    @AppStorage("alpaca.grantDay")   private var storedDay: String = ""
-    @AppStorage("alpaca.grantCount") private var storedCount: Int = 0
-
     @State private var tier: Int = 0
+    @State private var isBlinking = false
 
-    private static let maxTier = 3
+    private static let blinkAssetName = "alpaca_blink"
 
-    /// 當天的 key。用本地日曆，跟 TodayView 的當日區間同一套時區觀念。
-    private var todayKey: String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: Date())
-    }
+    /// 羊駝顯示高度。眨眼圖的位置是照這個高度換算出來的，改這裡兩邊會一起跟著動。
+    private static let artworkHeight: CGFloat = 160
+
+    /// 四張羊駝圖都是 2:3（alpaca_0~2 是 1024×1536、alpaca_3 是 408×612），
+    /// scaledToFit 之後實際畫出來的寬度就是 高 × 2/3。
+    private static let artworkAspect: CGFloat = 2.0 / 3.0
 
     /// 今天「還開著」的那一筆 DailyStat。
     /// 一定要帶 !isClosed：收割後 EODFlow 會把舊的那筆設成 harvested+isClosed，
@@ -65,8 +60,11 @@ struct AlpacaStatusView: View {
             alpaca
                 .id(tier)                    // 換階 → 移除＋插入 → 淡入淡出
                 .transition(.opacity)
+
+            // 閉眼圖片只疊在羊駝上方短暫出現，製造 blink 效果。
+            blinkOverlay
         }
-        .frame(height: 160)
+        .frame(height: Self.artworkHeight)
         .frame(maxWidth: .infinity)
         // 彈一下才有「拿到獎勵」的感覺。keyframeAnimator 由 tier 觸發，
         // 連續發放時會直接重跑而不是排隊，所以不會抖。
@@ -79,9 +77,13 @@ struct AlpacaStatusView: View {
             }
         }
         .accessibilityLabel("羊駝狀態")        // 連 VoiceOver 都不講公克數
+        .task { await runBlinkLoop() }
         .onAppear { syncTier() }
-        .onReceive(NotificationCenter.default.publisher(for: .woolGained)) { _ in
-            registerGrant()
+        // RewardEngine 每次發放都會把新的 growthTier 一起送出來，直接用它，
+        // 不要自己另外數一份（回饋頁也是讀這個值）。
+        .onReceive(NotificationCenter.default.publisher(for: .woolGained)) { notification in
+            let posted = notification.userInfo?["growthTier"] as? Int
+            applyTier(posted ?? RewardEngine.alpacaGrowthTier())
         }
         // 收割後 / 跨日：新開的工作日 woolG 是 0 → 羊駝歸零
         .onChange(of: openTodayWoolG) { _, wool in
@@ -91,40 +93,84 @@ struct AlpacaStatusView: View {
 
     // MARK: - Tier state
 
-    /// 進畫面時把 tier 對回持久化的次數。
-    /// 跨日、或這個工作日還沒發過羊毛（含剛收割完新開的那筆）都歸零。
+    /// 進畫面時對回 RewardEngine 記的成長次數。
+    /// 這個工作日還沒發過羊毛（含剛收割完新開的那一筆）就顯示第 0 階。
     private func syncTier() {
-        if storedDay != todayKey {
-            storedDay = todayKey
-            storedCount = 0
-        }
-        if openTodayWoolG == 0 {
-            storedCount = 0
-        }
-
-        tier = min(storedCount, Self.maxTier)
+        tier = openTodayWoolG == 0 ? 0 : RewardEngine.alpacaGrowthTier()
     }
 
-    /// 每收到一次 .woolGained 就升一階（上限 3）
-    private func registerGrant() {
-        if storedDay != todayKey {          // 跨日的第一次發放
-            storedDay = todayKey
-            storedCount = 0
-        }
-
-        storedCount += 1
-        let newTier = min(storedCount, Self.maxTier)
+    private func applyTier(_ newTier: Int) {
         guard newTier != tier else { return }
-
         withAnimation(.easeInOut(duration: 0.40)) {
             tier = newTier
         }
     }
 
     private func resetTier() {
-        storedCount = 0
-        withAnimation(.easeInOut(duration: 0.40)) {
-            tier = 0
+        applyTier(0)
+    }
+
+    // MARK: - Blink animation
+
+    // 眨眼圖的位置改用「佔整張圖的比例」表示，不是寫死的 pt。
+    // 原本 22 / -19.5 / -46 是照 160pt 高度手調出來的，換算成比例後
+    // 在同樣高度下算出來完全一樣，但之後改顯示尺寸就不用重調。
+    // 四張圖的頭都在左上、眼睛都落在大約 (0.31, 0.20)，所以四階共用同一組比例。
+
+    /// 眼睛中心在圖上的相對位置（0~1，左上角為原點）
+    private static let blinkCenter = CGPoint(x: 0.317, y: 0.213)
+
+    /// 閉眼圖寬度佔整張圖寬度的比例
+    private static let blinkWidthRatio: CGFloat = 0.206
+
+    /// scaledToFit 之後羊駝實際佔的區域
+    private static var artworkSize: CGSize {
+        CGSize(width: artworkHeight * artworkAspect, height: artworkHeight)
+    }
+
+    private var blinkWidth: CGFloat {
+        Self.artworkSize.width * Self.blinkWidthRatio
+    }
+
+    /// offset 是從中心算的，所以要把相對座標減掉 0.5
+    private var blinkXOffset: CGFloat {
+        (Self.blinkCenter.x - 0.5) * Self.artworkSize.width
+    }
+
+    private var blinkYOffset: CGFloat {
+        (Self.blinkCenter.y - 0.5) * Self.artworkSize.height
+    }
+
+    @ViewBuilder
+    private var blinkOverlay: some View {
+        if UIImage(named: Self.blinkAssetName) != nil {
+            Image(Self.blinkAssetName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: blinkWidth)
+                .offset(x: blinkXOffset, y: blinkYOffset)
+                .opacity(isBlinking ? 1 : 0)
+                .animation(.easeInOut(duration: 0.05), value: isBlinking)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func runBlinkLoop() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(2.8))
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                isBlinking = true
+            }
+
+            try? await Task.sleep(for: .seconds(0.12))
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                isBlinking = false
+            }
         }
     }
 
@@ -147,7 +193,7 @@ struct AlpacaStatusView: View {
     }
 
     private static func artworkName(for tier: Int) -> String? {
-        let name = "alpaca_\(min(max(tier, 0), maxTier))"
+        let name = "alpaca_\(min(max(tier, 0), 3))"
         #if canImport(UIKit)
         return UIImage(named: name) == nil ? nil : name
         #else

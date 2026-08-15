@@ -81,6 +81,14 @@ enum RewardEngine {
         UserDefaults.standard.integer(forKey: alpacaGrowthKey(for: date))
     }
 
+    /// 收割完、新的工作日開始時把成長次數歸零，羊駝重新從第 0 階長起。
+    /// 成長次數是以「日期」為 key，但收割會在同一天關掉舊的 DailyStat、
+    /// 另外開一筆新的工作日；不歸零的話新工作日會直接從滿階開始，
+    /// 而且下一次發放會 min(3+1, 3) 卡在頂階，看起來就像沒有反應。
+    static func resetAlpacaGrowth(for date: Date = Date()) {
+        UserDefaults.standard.set(0, forKey: alpacaGrowthKey(for: date))
+    }
+
     @discardableResult
     private static func recordAlpacaGrowth(for date: Date) -> Int {
         let key = alpacaGrowthKey(for: date)

@@ -40,12 +40,12 @@ struct EODAchievementModal: View {
         settlementStat.woolG
     }
 
+    /// 用 RewardEngine 記的成長次數，跟今日頁／回饋頁同一個來源。
+    /// 原本是 startCount+stuckCount+doneCount，但 RewardEngine 裡
+    /// .acceptSplit 和 .completionNoteBonus 兩種事件不加任何計數器，
+    /// 所以那個加總會少算，收割畫面的羊駝就跟其他頁對不起來。
     private var settlementAlpacaTier: Int {
-        AlpacaFeedbackSnapshot.tierForRecordedActions(
-            startCount: settlementStat.startCount,
-            stuckCount: settlementStat.stuckCount,
-            doneCount: settlementStat.doneCount
-        )
+        RewardEngine.alpacaGrowthTier(for: settlementDate)
     }
 
     private var settlementTasks: [TodoTask] {
@@ -287,6 +287,11 @@ struct EODAchievementModal: View {
         if !hasActive {
             modelContext.insert(DailyStat(date: activeDate))
         }
+
+        // 新的工作日開始 → 羊駝的成長次數歸零，重新從第 0 階長起。
+        // 放在這裡而不是 commitHarvest()：收割動畫還在播的時候
+        // 成就畫面顯示的是當日最終的羊駝，提早歸零會讓它中途變光禿。
+        RewardEngine.resetAlpacaGrowth(for: activeDate)
 
         try? modelContext.save()
     }
