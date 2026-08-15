@@ -68,10 +68,10 @@ struct TaskCardView: View {
     /// greyed out, progress not draggable, no action buttons, record viewing only.
     private var isSplitParent: Bool { task.status == "split" }
 
-    // 分類色條：優先用 task.colorHex，否則回退主題強調色
+    // 分類色條：colorHex →（沒有的話）依分類名稱回推 → 都沒有才用預設強調色。
+    // 舊資料只有 category、沒有 colorHex，靠第二段才不會整排同色。
     private var categoryColor: Color {
-        if let hex = task.colorHex, let color = Color(hex: hex) { return color }
-        return .alpacaTerracotta
+        CategoryColor.color(colorHex: task.colorHex, category: task.category)
     }
 
     var body: some View {

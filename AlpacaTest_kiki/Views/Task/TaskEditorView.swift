@@ -35,6 +35,9 @@ struct TaskEditorView: View {
         }
     }
 
+    /// 現有分類是從所有任務的 category 去重來的（TSK-03：沒有獨立的分類資料表）
+    @Query private var allTasks: [TodoTask]
+
     @State private var name: String
     @State private var note: String
     @State private var isMustToday: Bool
@@ -42,11 +45,16 @@ struct TaskEditorView: View {
     @State private var dateState: DateState
     @State private var startDate: Date
 
+    @State private var category: String?          // nil = 無分類
+    @State private var isAddingCategory = false
+    @State private var newCategoryName = ""
+
     private let complexityLabels = ["簡單", "中等", "困難"]
 
     init(task: TodoTask? = nil) {
         self.task = task
 
+        _category    = State(initialValue: task?.category)
         _name        = State(initialValue: task?.name ?? "")
         _note        = State(initialValue: task?.note ?? "")
         _isMustToday = State(initialValue: task?.isMustToday ?? false)
@@ -73,6 +81,46 @@ struct TaskEditorView: View {
 
     private var trimmedName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: - 分類（TSK-03）
+
+    /// 所有任務用過的分類，去重排序。沒有分類資料表，這就是唯一來源。
+    private var availableCategories: [String] {
+        Set(allTasks.compactMap { $0.category })
+            .sorted { $0.localizedCompare($1) == .orderedAscending }
+    }
+
+    private var trimmedNewCategory: String {
+        newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 新分類建立後立刻選起來
+    private func commitNewCategory() {
+        let name = trimmedNewCategory
+        guard !name.isEmpty else { return }
+        category = name
+        isAddingCategory = false
+        newCategoryName = ""
+    }
+
+    private func cancelNewCategory() {
+        isAddingCategory = false
+        newCategoryName = ""
+    }
+
+    /// 分類要配哪個顏色：同分類已經有人用過就沿用，否則照現有分類數量循環調色盤。
+    private func colorHex(for category: String) -> String {
+        if let existing = allTasks.first(where: { $0.category == category && $0.colorHex != nil })?.colorHex {
+            return existing
+        }
+
+        let categories = availableCategories
+        if let index = categories.firstIndex(of: category) {
+            return CategoryColor.hex(atIndex: index)
+        }
+        // 全新的分類 → 接在現有分類後面拿下一個色
+        return CategoryColor.hex(atIndex: categories.count)
     }
 
     /// 空白備註存成 nil，不存空字串——這樣卡片和記錄頁只要判斷 nil 就好
@@ -112,6 +160,38 @@ struct TaskEditorView: View {
                                    selection: $startDate,
                                    in: earliestSelectableDate...,
                                    displayedComponents: .date)
+                    }
+                }
+
+                Section("分類") {
+                    Picker("分類", selection: $category) {
+                        Text("無分類").tag(String?.none)
+                        ForEach(availableCategories, id: \.self) { name in
+                            Text(name).tag(String?.some(name))
+                        }
+                    }
+
+                    if isAddingCategory {
+                        // 「＋新增分類」被點下去後，這一列就變成輸入框（TSK-03）
+                        HStack {
+                            TextField("新分類名稱", text: $newCategoryName)
+                                .submitLabel(.done)
+                                .onSubmit { commitNewCategory() }
+
+                            Button("確定") { commitNewCategory() }
+                                .buttonStyle(.borderless)
+                                .disabled(trimmedNewCategory.isEmpty)
+
+                            Button("取消") { cancelNewCategory() }
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Button {
+                            isAddingCategory = true
+                        } label: {
+                            Label("新增分類", systemImage: "plus.circle")
+                        }
                     }
                 }
 
@@ -161,6 +241,10 @@ struct TaskEditorView: View {
 
         target.name = trimmedName
         target.note = normalizedNote
+
+        // TSK-03：分類決定色條顏色，一併把 colorHex 寫進去
+        target.category = category
+        target.colorHex = category.map { colorHex(for: $0) }
         target.isMustToday = isMustToday
         target.complexity = complexity
 
