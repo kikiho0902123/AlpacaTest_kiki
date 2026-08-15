@@ -28,22 +28,7 @@ import UIKit
 struct AlpacaStatusView: View {
     @Query(sort: \DailyStat.date) private var allStats: [DailyStat]
 
-    /// 當日發放次數，跨 view 重建（切分頁、關 sheet）都要留著，
-    /// 否則羊駝會被打回光溜溜的 alpaca_0。
-    @AppStorage("alpaca.grantDay")   private var storedDay: String = ""
-    @AppStorage("alpaca.grantCount") private var storedCount: Int = 0
-
     @State private var tier: Int = 0
-
-    private static let maxTier = 3
-
-    /// 當天的 key。用本地日曆，跟 TodayView 的當日區間同一套時區觀念。
-    private var todayKey: String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: Date())
-    }
 
     /// 今天「還開著」的那一筆 DailyStat。
     /// 一定要帶 !isClosed：收割後 EODFlow 會把舊的那筆設成 harvested+isClosed，
@@ -80,8 +65,11 @@ struct AlpacaStatusView: View {
         }
         .accessibilityLabel("羊駝狀態")        // 連 VoiceOver 都不講公克數
         .onAppear { syncTier() }
-        .onReceive(NotificationCenter.default.publisher(for: .woolGained)) { _ in
-            registerGrant()
+        // RewardEngine 每次發放都會把新的 growthTier 一起送出來，直接用它，
+        // 不要自己另外數一份（回饋頁也是讀這個值）。
+        .onReceive(NotificationCenter.default.publisher(for: .woolGained)) { notification in
+            let posted = notification.userInfo?["growthTier"] as? Int
+            applyTier(posted ?? RewardEngine.alpacaGrowthTier())
         }
         // 收割後 / 跨日：新開的工作日 woolG 是 0 → 羊駝歸零
         .onChange(of: openTodayWoolG) { _, wool in
@@ -91,41 +79,21 @@ struct AlpacaStatusView: View {
 
     // MARK: - Tier state
 
-    /// 進畫面時把 tier 對回持久化的次數。
-    /// 跨日、或這個工作日還沒發過羊毛（含剛收割完新開的那筆）都歸零。
+    /// 進畫面時對回 RewardEngine 記的成長次數。
+    /// 這個工作日還沒發過羊毛（含剛收割完新開的那一筆）就顯示第 0 階。
     private func syncTier() {
-        if storedDay != todayKey {
-            storedDay = todayKey
-            storedCount = 0
-        }
-        if openTodayWoolG == 0 {
-            storedCount = 0
-        }
-
-        tier = min(storedCount, Self.maxTier)
+        tier = openTodayWoolG == 0 ? 0 : RewardEngine.alpacaGrowthTier()
     }
 
-    /// 每收到一次 .woolGained 就升一階（上限 3）
-    private func registerGrant() {
-        if storedDay != todayKey {          // 跨日的第一次發放
-            storedDay = todayKey
-            storedCount = 0
-        }
-
-        storedCount += 1
-        let newTier = min(storedCount, Self.maxTier)
+    private func applyTier(_ newTier: Int) {
         guard newTier != tier else { return }
-
         withAnimation(.easeInOut(duration: 0.40)) {
             tier = newTier
         }
     }
 
     private func resetTier() {
-        storedCount = 0
-        withAnimation(.easeInOut(duration: 0.40)) {
-            tier = 0
-        }
+        applyTier(0)
     }
 
     // MARK: - Artwork
@@ -147,7 +115,7 @@ struct AlpacaStatusView: View {
     }
 
     private static func artworkName(for tier: Int) -> String? {
-        let name = "alpaca_\(min(max(tier, 0), maxTier))"
+        let name = "alpaca_\(min(max(tier, 0), 3))"
         #if canImport(UIKit)
         return UIImage(named: name) == nil ? nil : name
         #else
