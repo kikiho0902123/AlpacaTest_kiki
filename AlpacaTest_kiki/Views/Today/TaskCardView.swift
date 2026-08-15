@@ -354,7 +354,7 @@ struct TaskCardView: View {
         task.status = "started"
         task.progress = max(task.progress, 0.2)          // COM-02: auto 0.2 on start
         // Wool is added ONLY through RewardEngine (§1.4).
-        RewardEngine.grant(task.parentID != nil ? .startSubtask : .startTask, context: modelContext)
+        RewardEngine.grant(task.parentID != nil ? .startSubtask : .startTask(task.complexity), context: modelContext)
     }
 
     /// Complete ONLY posts the event. B's flow (TOD-05 confirm → TOD-06 note)

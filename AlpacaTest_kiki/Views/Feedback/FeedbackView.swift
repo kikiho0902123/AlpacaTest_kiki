@@ -8,13 +8,16 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct FeedbackView: View {
+    @Environment(\.modelContext) private var modelContext
     @Query(sort: \DailyStat.date) private var stats: [DailyStat]
     @Query(sort: \TodoTask.createdAt) private var tasks: [TodoTask]
     @Query(sort: \TaskLog.timestamp) private var logs: [TaskLog]
 
     @State private var liveAlpacaOffset: CGFloat = -4
+    @State private var liveTodayWool: Int?
 
     private var calendar: Calendar { Calendar.current }
 
@@ -39,6 +42,10 @@ struct FeedbackView: View {
 
     private var todayWool: Int {
         todayStat?.woolG ?? 0
+    }
+
+    private var displayedTodayWool: Int {
+        liveTodayWool ?? todayWool
     }
 
     // 歷史週次：固定顯示最近 12 週，不包含本週；越新的週越上方。
@@ -83,6 +90,22 @@ struct FeedbackView: View {
             }
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("記錄與回饋")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .onAppear {
+            refreshLiveTodayWool()
+        }
+        .onChange(of: todayWool) { _, newValue in
+            liveTodayWool = newValue
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .woolGained)) { notification in
+            if let totalToday = notification.userInfo?["totalToday"] as? Int {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    liveTodayWool = totalToday
+                }
+            } else {
+                refreshLiveTodayWool()
+            }
         }
     }
 
@@ -90,18 +113,19 @@ struct FeedbackView: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(spacing: 18) {
                 // 這裡用輕微 idle animation 表示「正在進行中的一天」。
-                AlpacaFeedbackSnapshot(woolG: todayWool, size: 150, isLive: true)
+                AlpacaFeedbackSnapshot(woolG: displayedTodayWool, size: 150, isLive: true)
                     .offset(y: liveAlpacaOffset)
                     .animation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true), value: liveAlpacaOffset)
                     .onAppear { liveAlpacaOffset = 4 }
 
                 VStack(spacing: 8) {
-                    Text("目前已累積 \(todayWool) 克羊毛")
+                    // 回饋頁可以顯示今日累積羊毛；今日任務頁才維持不顯示克數。
+                    Text("目前已累積 \(displayedTodayWool) 克羊毛")
                         .font(.system(.title2, design: .rounded).weight(.semibold))
                         .foregroundStyle(Theme.primaryText)
                         .multilineTextAlignment(.center)
 
-                    Text(FeedbackCaptions.caption(for: todayWool))
+                    Text(FeedbackCaptions.caption(for: displayedTodayWool))
                         .font(.system(.body, design: .rounded))
                         .foregroundStyle(Theme.secondaryText)
                         .multilineTextAlignment(.center)
@@ -180,6 +204,14 @@ struct FeedbackView: View {
         }
 
         return date < today ? .past : .future
+    }
+
+    private func refreshLiveTodayWool() {
+        let descriptor = FetchDescriptor<DailyStat>(sortBy: [SortDescriptor(\DailyStat.date)])
+        let allStats = (try? modelContext.fetch(descriptor)) ?? []
+        let openTodayStat = allStats.first { calendar.isDate($0.date, inSameDayAs: today) && !$0.isClosed }
+        let anyTodayStat = allStats.first { calendar.isDate($0.date, inSameDayAs: today) }
+        liveTodayWool = (openTodayStat ?? anyTodayStat)?.woolG ?? 0
     }
 }
 
@@ -389,21 +421,40 @@ private struct WeeklySnapshotCell: View {
 
 }
 
+/// 共用羊駝顯示元件：羊駝切圖規則集中在 B 的 FeedbackView，Today 之後只要傳入今日累積羊毛即可。
 struct AlpacaFeedbackSnapshot: View {
     let woolG: Int
     var size: CGFloat
     var isLive: Bool = false
 
-    private var tier: Int {
+    private static let assetNames = ["alpaca_0", "alpaca_1", "alpaca_2", "alpaca_3"]
+
+    /// 給 Today / Feedback 共用：依後台累積羊毛判斷目前應顯示第幾階段羊駝。
+    /// Demo 只需要三次變化；達到第 3 階後會固定顯示第四張滿毛圖。
+    static func tier(forWoolG woolG: Int) -> Int {
         switch woolG {
-        case ..<200: return 0
-        case ..<600: return 1
-        case ..<1000: return 2
+        case ...0: return 0
+        case ..<60: return 1
+        case ..<120: return 2
         default: return 3
         }
     }
 
-    private var color: Color {
+    /// 給其他頁面需要直接取圖名時使用，避免各頁各自硬寫 alpaca_0...3。
+    static func assetName(forTier tier: Int) -> String {
+        let safeTier = min(max(tier, 0), assetNames.count - 1)
+        return assetNames[safeTier]
+    }
+
+    private var tier: Int {
+        Self.tier(forWoolG: woolG)
+    }
+
+    private var assetName: String {
+        Self.assetName(forTier: tier)
+    }
+
+    private var fallbackColor: Color {
         switch tier {
         case 0: return Theme.surfaceMint
         case 1: return Theme.primary
@@ -415,22 +466,34 @@ struct AlpacaFeedbackSnapshot: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(color.opacity(isLive ? 0.34 : 0.28))
+                .fill(fallbackColor.opacity(isLive ? 0.30 : 0.24))
 
-            Circle()
-                .fill(.white.opacity(0.34))
-                .frame(width: size * 0.72, height: size * 0.72)
-                .offset(x: -size * 0.04, y: -size * 0.03)
-
-            Image(systemName: tier >= 2 ? "pawprint.circle.fill" : "pawprint.circle")
-                .resizable()
-                .scaledToFit()
-                .padding(size * 0.19)
-                .foregroundStyle(color)
-                .symbolEffect(.bounce, value: tier)
+            alpacaImage
         }
         .frame(width: size, height: size)
         .accessibilityLabel(isLive ? "目前進行中的羊駝狀態" : "歷史羊駝快照")
+    }
+
+    @ViewBuilder
+    private var alpacaImage: some View {
+        if let image = UIImage(named: assetName) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .padding(size * 0.08)
+                .symbolEffect(.bounce, value: tier)
+        } else {
+            fallbackImage
+        }
+    }
+
+    private var fallbackImage: some View {
+        Image(systemName: tier >= 2 ? "pawprint.circle.fill" : "pawprint.circle")
+            .resizable()
+            .scaledToFit()
+            .padding(size * 0.19)
+            .foregroundStyle(fallbackColor)
+            .symbolEffect(.bounce, value: tier)
     }
 }
 

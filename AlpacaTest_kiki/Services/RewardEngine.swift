@@ -10,24 +10,43 @@ import Foundation
 import SwiftData
 
 enum RewardEvent {
-    case startTask
+    case startTask(Int)       // complexity 0 easy / 1 medium / 2 hard
     case startSubtask
     case acceptSplit
-    case stuckChatDone
+    case stuckHelpAccepted
+    case stuckHelpRejectedWithFeedback
+    case stuckHelpRejectedWithoutFeedback
     case complete(Int)        // complexity 0 easy / 1 medium / 2 hard
     case completionNoteBonus
 }
 
 enum RewardEngine {
-    // Spec fixes only 15g per subtask start (SPL-06); the rest are provisional, tunable pre-demo
+    // 單次行為獲得的羊毛克數只存在後台；顯示時由回饋／結算頁讀取 DailyStat.woolG。
     static func woolFor(_ event: RewardEvent) -> Int {
         switch event {
-        case .startTask:            return 50
-        case .startSubtask:         return 15          // fixed by spec
-        case .acceptSplit:          return 30
-        case .stuckChatDone:        return 40
-        case .complete(let cx):     return [100, 200, 300][min(max(cx, 0), 2)]   // easy/medium/hard
-        case .completionNoteBonus:  return 50          // TOD-06: extra reward when a note is written
+        case .startTask(let complexity):
+            return woolForStartingTask(complexity: complexity)
+        case .startSubtask:
+            return 15
+        case .acceptSplit:
+            return 12
+        case .stuckHelpAccepted, .stuckHelpRejectedWithFeedback:
+            return 60
+        case .stuckHelpRejectedWithoutFeedback:
+            return 39
+        case .complete:
+            return 41
+        case .completionNoteBonus:
+            return 19
+        }
+    }
+
+    // 任務複雜度：0 簡單 18g / 1 中等 31g / 2 困難 47g；其他值保守視為中等。
+    private static func woolForStartingTask(complexity: Int) -> Int {
+        switch complexity {
+        case 0: return 18
+        case 2: return 47
+        default: return 31
         }
     }
 
@@ -38,10 +57,14 @@ enum RewardEngine {
         stat.woolG += grams
 
         switch event {
-        case .startTask, .startSubtask: stat.startCount += 1
-        case .stuckChatDone:            stat.stuckCount += 1
-        case .complete:                 stat.doneCount += 1
-        case .acceptSplit, .completionNoteBonus: break
+        case .startTask, .startSubtask:
+            stat.startCount += 1
+        case .stuckHelpAccepted, .stuckHelpRejectedWithFeedback, .stuckHelpRejectedWithoutFeedback:
+            stat.stuckCount += 1
+        case .complete:
+            stat.doneCount += 1
+        case .acceptSplit, .completionNoteBonus:
+            break
         }
 
         try? context.save()
