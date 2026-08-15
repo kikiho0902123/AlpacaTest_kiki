@@ -96,6 +96,15 @@ struct TaskCardView: View {
                                 }
                             }
                         }
+
+                        // 狀況備註：卡片上只給一行預覽，完整內容在編輯器／任務記錄裡
+                        if let note = task.note, !note.isEmpty {
+                            Text(note)
+                                .font(.alpacaCaption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
                     }
 
                     Spacer(minLength: 0)
@@ -366,6 +375,7 @@ struct TaskCardView: View {
     notStarted.colorHex = "#D9733F"
     notStarted.complexity = 1
     notStarted.isMustToday = true
+    notStarted.note = "抽屜那疊收據還沒分類，先從左邊第一格開始就好"
 
     let started = TodoTask(name: "讀日文三小時")
     started.category = "學習"

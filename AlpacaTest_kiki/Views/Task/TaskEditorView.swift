@@ -36,6 +36,7 @@ struct TaskEditorView: View {
     }
 
     @State private var name: String
+    @State private var note: String
     @State private var isMustToday: Bool
     @State private var complexity: Int
     @State private var dateState: DateState
@@ -47,6 +48,7 @@ struct TaskEditorView: View {
         self.task = task
 
         _name        = State(initialValue: task?.name ?? "")
+        _note        = State(initialValue: task?.note ?? "")
         _isMustToday = State(initialValue: task?.isMustToday ?? false)
         _complexity  = State(initialValue: task?.complexity ?? 0)
         _startDate   = State(initialValue: task?.startDate ?? Calendar.current.startOfDay(for: .now))
@@ -71,6 +73,12 @@ struct TaskEditorView: View {
 
     private var trimmedName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 空白備註存成 nil，不存空字串——這樣卡片和記錄頁只要判斷 nil 就好
+    private var normalizedNote: String? {
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// TOD-02 只讓選今天以後。但編輯一筆本來就排在過去的任務時，
@@ -105,6 +113,13 @@ struct TaskEditorView: View {
                                    in: earliestSelectableDate...,
                                    displayedComponents: .date)
                     }
+                }
+
+                Section("狀況備註") {
+                    TextField("這個任務目前的狀況、卡點、或想記住的事",
+                              text: $note,
+                              axis: .vertical)
+                        .lineLimit(3...5)
                 }
 
                 Section("設定") {
@@ -145,6 +160,7 @@ struct TaskEditorView: View {
         }
 
         target.name = trimmedName
+        target.note = normalizedNote
         target.isMustToday = isMustToday
         target.complexity = complexity
 
