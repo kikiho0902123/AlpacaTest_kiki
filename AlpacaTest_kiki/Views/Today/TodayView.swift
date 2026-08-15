@@ -145,7 +145,7 @@ struct TodayView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .sheet(isPresented: $showAddSheet) {
-            AddTaskView()
+            TaskEditorView(task: nil)
         }
         .sheet(isPresented: completionSheetBinding) {
             if let completingTask {

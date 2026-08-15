@@ -5,7 +5,7 @@
 //  Action task card (TOD-03). Owned by A.
 //  Step 4: 按鈕全部接上 — TOD-04 開始詢問、SPL-01~04 拆分、STK-01/02 卡關、
 //  TOD-07 任務記錄、TSK-06 刪除確認。所有確認框都走共用的 ConfirmModal 樣板（COM-06）。
-//  唯一還是 print() 的是「編輯」：要等 Step 3 的 TaskEditorView 支援編輯模式。
+//  「編輯」已接上 TaskEditorView(task:) 編輯模式（TSK-05），卡片內不再有 placeholder。
 //  Deferred: must-today tag, subcategory line, visual polish.
 //
 
@@ -35,15 +35,17 @@ struct TaskCardView: View {
         }
     }
 
-    /// Sheet：拆分流程（要帶 source）與任務記錄
+    /// Sheet：拆分流程（要帶 source）、任務記錄、編輯
     private enum CardSheet: Identifiable {
         case split(SplitSource)  // SPL-01~04
         case record              // TOD-07
+        case edit                // TSK-05
 
         var id: String {
             switch self {
             case .split(let source): return "split-\(source)"
             case .record:            return "record"
+            case .edit:              return "edit"
             }
         }
     }
@@ -244,6 +246,9 @@ struct TaskCardView: View {
             SplitFlowModal(task: task, source: source)
         case .record:
             TaskRecordSheet(task: task)
+        case .edit:
+            // TSK-05：共用編輯器，帶入既有任務 → 只改不新增
+            TaskEditorView(task: task)
         }
     }
 
@@ -275,10 +280,8 @@ struct TaskCardView: View {
 
             Divider()
 
-            // TODO(Step 3): AddTaskView 目前只支援新增，沒有編輯模式；
-            // 等 TaskEditorView（TSK-01/05 共用 create/edit）做出來再接。
             Button {
-                print("編輯 tapped — 待 Step 3 的 TaskEditorView 支援編輯模式")
+                sheet = .edit
             } label: {
                 Label("編輯", systemImage: "pencil")
             }
