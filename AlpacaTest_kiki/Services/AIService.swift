@@ -85,7 +85,15 @@ struct HistoricalTaskSummary: Codable {
 
 enum AIConfig {
     /// 先跑 apitest.swift 確認你的帳號有哪個模型，再改這裡（改原始碼重 build，不做執行期切換）
-    static let model = "gpt-5-mini"
+    /// var 而非 let：ModelCompareTests 要能在同一份 prompt 上橫向比較不同模型
+    ///
+    /// 為什麼是 gpt-5.5（ModelCompareTests 實測，同一份 prompt 同一段對話）：
+    ///   gpt-5-mini   平均 4.5s／輪，R3 只會說「先寫三句事實」——還在教怎麼寫週報
+    ///   gpt-5.4-mini 平均 2.1s／輪，但 R2 就違規下標題（prompt 規定 R1/R2 不用）
+    ///   gpt-5.5      平均 2.3s／輪，R3 抓到真正的卡點是「怕被評價」，
+    ///                給的是「開一份草稿，標不給主管版」——拿掉會被評價的前提
+    /// 快一倍又更準，沒有理由留在舊模型。
+    static var model = "gpt-5.5"
     /// var 而非 let：測試要能指向壞掉的位址驗證降級行為
     static var endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
 
@@ -95,6 +103,14 @@ enum AIConfig {
     /// gpt-5 系列的話多程度（low/medium/high）。聊天泡泡固定 low，
     /// 這是「字數」最直接的旋鈕，比 prompt 裡寫「100 字」有效得多。
     static let chatVerbosity = "low"
+    /// 「不需要思考」那檔的名字會隨模型世代改：gpt-5.0 家族叫 minimal，
+    /// 5.1 之後改名叫 none，送錯的那個會直接 400（不是降級，是整包失敗）。
+    /// R1 開場用得到這檔。
+    static var lowestEffort: String {
+        let legacyFamily = model == "gpt-5" || model.hasPrefix("gpt-5-")
+        return legacyFamily ? "minimal" : "none"
+    }
+
     /// 低延遲服務層（已實測本帳號可用）。單價較高但 demo 用量可忽略，換聊天不卡頓。
     /// 若帳號被降級或改用其他 model 而收到 400，把這行改成 nil 就會退回一般排隊。
     static let serviceTier: String? = "priority"
@@ -130,7 +146,7 @@ enum SafetyGate {
 @MainActor
 final class AIService {
     static let shared = AIService()
-    /// 有 key 就走真 API（已驗證 gpt-5-mini 可用），沒 key 自動走離線罐頭。
+    /// 有 key 就走真 API（已驗證 gpt-5.5 可用），沒 key 自動走離線罐頭。
     /// 這樣 A/B 不用設定就能開發，C 和 demo 機器則自動接真 AI。
     /// 現場網路掛掉時：手動設成 true 即可完整離線 demo。
     var useMock = Secrets.openAIKey.isEmpty
@@ -177,7 +193,7 @@ final class AIService {
         do {
             // R1 只是打招呼：沒有使用者訊息可分析，不需要思考預算，用 minimal 換開場速度
             let raw = try await callChat(apiMessages, wantJSON: true,
-                                         effort: round <= 1 ? "minimal" : AIConfig.reasoningEffort)
+                                         effort: round <= 1 ? AIConfig.lowestEffort : AIConfig.reasoningEffort)
             var reply = Self.decodeStuckReply(raw)
             // tried 是防重複推薦的關鍵，不能讓模型「忘記」把上一輪的帶過來 → 程式面合併
             reply.analysis = Self.carryForward(previous, into: reply.analysis)
