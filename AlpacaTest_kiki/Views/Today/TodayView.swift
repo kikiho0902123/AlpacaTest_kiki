@@ -45,6 +45,10 @@ struct TodayView: View {
     /// silently close a DailyStat mid-demo. Off until after the demo.
     private static let autoRolloverEnabled = false
 
+    /// 今日頁的左右留白。原本用預設的 .padding(.horizontal)（16pt），
+    /// 卡片和區塊標題貼邊太緊；卡片自己的內距不動。
+    private static let screenMargin: CGFloat = 24
+
     private var calendar: Calendar { Calendar.current }
 
     // MARK: - Today's window
@@ -115,7 +119,7 @@ struct TodayView: View {
 
                         if shouldShowEODIsland {
                             eodIsland
-                                .padding(.horizontal)
+                                .padding(.horizontal, Self.screenMargin)
                         }
 
                         if todayTasks.isEmpty {
@@ -205,21 +209,15 @@ struct TodayView: View {
 
     // MARK: - Pieces
 
+    /// 日期標題。TOD-02 的日曆圖示已移除 —— 那個入口沒有接上，
+    /// 依日期瀏覽由任務庫的「時間」月曆負責。
     private var header: some View {
-        HStack {
-            Text(dateHeading)
-                .font(.alpacaTitle)
-                .foregroundStyle(Color.alpacaBrown)
-
-            Spacer()
-
-            // TOD-02 DatePickerModal 是 Batch 2；現在只是圖示，不開任何東西
-            Image(systemName: "calendar")
-                .font(.title3)
-                .foregroundStyle(Color.alpacaBrown.opacity(0.6))
-        }
-        .padding(.horizontal)
-        .padding(.top, 8)
+        Text(dateHeading)
+            .font(.alpacaTitle)
+            .foregroundStyle(Color.alpacaBrown)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Self.screenMargin)
+            .padding(.top, 8)
     }
 
     @ViewBuilder
@@ -229,13 +227,13 @@ struct TodayView: View {
                 Text(title)
                     .font(Theme.sectionTitleFont)
                     .foregroundStyle(Color.alpacaBrown.opacity(0.75))
-                    .padding(.horizontal)
+                    .padding(.horizontal, Self.screenMargin)
 
                 ForEach(tasks) { task in
                     TaskCardView(task: task) { task, source in
                         splitRequest = SplitRequest(task: task, source: source)
                     }
-                    .padding(.horizontal)
+                    .padding(.horizontal, Self.screenMargin)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
